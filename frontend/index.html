@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kinetic — Decentralized Identity for Open Source</title>
+    <meta name="description" content="Kinetic uses Decentralized Identifiers (DID) and IPFS to give open-source contributors a sovereign, verifiable identity.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Animated background -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+    <div class="bg-glow bg-glow-3"></div>
+
+    <!-- Navigation -->
+    <nav class="navbar" id="navbar">
+        <div class="nav-brand">
+            <div class="logo-icon">
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                    <circle cx="14" cy="14" r="12" stroke="url(#logoGrad)" stroke-width="2.5"/>
+                    <circle cx="14" cy="14" r="5" fill="url(#logoGrad)"/>
+                    <path d="M14 2 L14 8 M14 20 L14 26 M2 14 L8 14 M20 14 L26 14" stroke="url(#logoGrad)" stroke-width="1.5" stroke-linecap="round"/>
+                    <defs>
+                        <linearGradient id="logoGrad" x1="0" y1="0" x2="28" y2="28">
+                            <stop offset="0%" stop-color="#6366f1"/>
+                            <stop offset="100%" stop-color="#a855f7"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+            </div>
+            <span class="brand-name">Kinetic</span>
+        </div>
+        <div class="nav-links">
+            <a href="#features" class="nav-link">Features</a>
+            <a href="#how-it-works" class="nav-link">How It Works</a>
+            <a href="#did-info" class="nav-link">DID</a>
+        </div>
+        <button class="btn btn-nav" onclick="loginWithGithub()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+            Sign in with GitHub
+        </button>
+    </nav>
+
+    <!-- LOGIN PAGE -->
+    <main id="login-page">
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="hero-badge">
+                <span class="badge-dot"></span>
+                Protocol Labs × Infrastructure & Digital Rights
+            </div>
+            <h1 class="hero-title">
+                Your Identity,<br>
+                <span class="gradient-text">On-Chain & Sovereign</span>
+            </h1>
+            <p class="hero-subtitle">
+                Kinetic creates a <strong>Decentralized Identifier (DID)</strong> for every open-source contributor. 
+                Sign in with GitHub — we'll mint your DID and pin it to <strong>IPFS</strong>.
+            </p>
+            <div class="hero-cta">
+                <button class="btn btn-primary btn-lg" onclick="loginWithGithub()" id="hero-login-btn">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    Continue with GitHub
+                </button>
+                <a href="#how-it-works" class="btn btn-ghost btn-lg">
+                    Learn More ↓
+                </a>
+            </div>
+
+            <!-- Animated DID Preview Card -->
+            <div class="did-preview-card">
+                <div class="card-header">
+                    <div class="card-dots">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <span class="card-label">DID Document — IPFS</span>
+                </div>
+                <pre class="card-code"><code>{
+  <span class="json-key">"@context"</span>: <span class="json-string">"https://www.w3.org/ns/did/v1"</span>,
+  <span class="json-key">"id"</span>: <span class="json-string">"did:retrofund:<span class="typing-text" id="typing-did">alice</span>"</span>,
+  <span class="json-key">"github"</span>: <span class="json-string">"<span class="typing-text" id="typing-github">alice-dev</span>"</span>,
+  <span class="json-key">"wallet"</span>: <span class="json-string">"flow-wallet-address"</span>,
+  <span class="json-key">"createdAt"</span>: <span class="json-string">"2026-03-08"</span>
+}</code></pre>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section class="features" id="features">
+            <h2 class="section-title">Why Decentralized Identity?</h2>
+            <p class="section-subtitle">Take control of your contributor identity with Web3 primitives</p>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    </div>
+                    <h3>Self-Sovereign Identity</h3>
+                    <p>Your DID is yours. No central authority can revoke it. You control your identity, not a platform.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-purple">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                    </div>
+                    <h3>IPFS Pinned</h3>
+                    <p>Your DID document lives on IPFS — content-addressed and globally available, not locked in a database.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-emerald">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    </div>
+                    <h3>GitHub Verified</h3>
+                    <p>DID is linked to your verified GitHub profile — proving you are who you say you are.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon icon-amber">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    </div>
+                    <h3>Portable Reputation</h3>
+                    <p>Carry your contributions and reputation across platforms. One identity, everywhere.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- How It Works Section -->
+        <section class="how-it-works" id="how-it-works">
+            <h2 class="section-title">How It Works</h2>
+            <p class="section-subtitle">Three simple steps to your decentralized identity</p>
+            <div class="steps-container">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-line"></div>
+                    <div class="step-content">
+                        <h3>Sign in with GitHub</h3>
+                        <p>Authenticate using your GitHub account via OAuth 2.0. No passwords to remember.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-line"></div>
+                    <div class="step-content">
+                        <h3>DID Created & Pinned</h3>
+                        <p>A W3C-compliant DID document is generated and pinned to IPFS using Protocol Labs infrastructure.</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Identity Indexed</h3>
+                        <p>Your DID reference is stored in MongoDB for fast lookups, while the actual document lives on IPFS forever.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- DID Info Section -->
+        <section class="did-info" id="did-info">
+            <div class="did-info-grid">
+                <div class="did-info-text">
+                    <h2>What is a DID?</h2>
+                    <p>A <strong>Decentralized Identifier (DID)</strong> is a new type of identifier defined by the <a href="https://www.w3.org/TR/did-core/" target="_blank">W3C</a>. Unlike traditional usernames or emails, DIDs are:</p>
+                    <ul>
+                        <li><strong>Self-owned</strong> — You control your identity</li>
+                        <li><strong>Decentralized</strong> — No single point of failure</li>
+                        <li><strong>Verifiable</strong> — Cryptographically provable</li>
+                        <li><strong>Persistent</strong> — Stored on IPFS, not a server</li>
+                    </ul>
+                </div>
+                <div class="did-info-code">
+                    <div class="code-block">
+                        <div class="code-header">
+                            <span>MongoDB Record</span>
+                            <span class="code-badge">Indexed</span>
+                        </div>
+                        <pre><code>{
+  <span class="json-key">"github"</span>: <span class="json-string">"alice-dev"</span>,
+  <span class="json-key">"did"</span>: <span class="json-string">"did:retrofund:alice"</span>,
+  <span class="json-key">"ipfsCID"</span>: <span class="json-string">"bafybeih..."</span>,
+  <span class="json-key">"wallet"</span>: <span class="json-string">"flow-wallet"</span>
+}</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- DASHBOARD PAGE (hidden initially) -->
+    <main id="dashboard-page" class="hidden">
+        <section class="dashboard">
+            <div class="dashboard-header">
+                <div class="user-info">
+                    <img id="user-avatar" src="" alt="Avatar" class="user-avatar">
+                    <div>
+                        <h1 id="user-name" class="user-name"></h1>
+                        <p id="user-github" class="user-handle"></p>
+                    </div>
+                </div>
+                <button class="btn btn-ghost" onclick="logout()" id="logout-btn">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    Sign Out
+                </button>
+            </div>
+
+            <!-- Stats Cards -->
+            <div class="stats-grid">
+                <div class="stat-card stat-did">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                    <div class="stat-label">DID</div>
+                    <div class="stat-value" id="stat-did">—</div>
+                </div>
+                <div class="stat-card stat-ipfs">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                    </div>
+                    <div class="stat-label">IPFS CID</div>
+                    <div class="stat-value stat-mono" id="stat-ipfs">—</div>
+                </div>
+                <div class="stat-card stat-created">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    </div>
+                    <div class="stat-label">Created</div>
+                    <div class="stat-value" id="stat-created">—</div>
+                </div>
+            </div>
+
+            <!-- DID Document Section -->
+            <div class="dashboard-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                            DID Document
+                        </h2>
+                        <span class="panel-badge">IPFS</span>
+                    </div>
+                    <div class="panel-body">
+                        <pre class="did-document-json" id="did-document-json">Loading...</pre>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <h2>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                            MongoDB Record
+                        </h2>
+                        <span class="panel-badge panel-badge-green">Indexed</span>
+                    </div>
+                    <div class="panel-body">
+                        <pre class="did-document-json" id="mongo-record-json">Loading...</pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Wallet Section -->
+            <div class="panel wallet-panel">
+                <div class="panel-header">
+                    <h2>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                        Flow Wallet
+                    </h2>
+                </div>
+                <div class="panel-body wallet-body">
+                    <div id="wallet-display" class="wallet-display">
+                        <p class="wallet-status" id="wallet-status">No wallet connected</p>
+                    </div>
+                    <div class="wallet-input-group">
+                        <input type="text" id="wallet-input" class="wallet-input" placeholder="Enter your Flow wallet address">
+                        <button class="btn btn-primary" onclick="updateWallet()" id="update-wallet-btn">
+                            Link Wallet
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <p>Built with ❤️ for the <strong>Protocol Labs</strong> Infrastructure & Digital Rights track</p>
+            <div class="footer-links">
+                <a href="https://www.w3.org/TR/did-core/" target="_blank">W3C DID Spec</a>
+                <span>•</span>
+                <a href="https://ipfs.tech/" target="_blank">IPFS</a>
+                <span>•</span>
+                <a href="https://protocol.ai/" target="_blank">Protocol Labs</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
