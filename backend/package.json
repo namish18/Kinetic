@@ -2,6 +2,7 @@
   "name": "backend",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
@@ -16,8 +17,12 @@
     "passport-github2": "^0.1.12",
     "express-session": "^1.17.3",
     "jsonwebtoken": "^9.0.2",
-    "node-fetch": "^3.3.2",
-    "uuid": "^9.0.0"
+    "dids": "^5.0.3",
+    "key-did-provider-ed25519": "^3.0.1",
+    "key-did-resolver": "^3.0.1",
+    "@web3-storage/w3up-client": "^16.5.2",
+    "@ucanto/principal": "^8.1.0",
+    "@web3-storage/access": "^19.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

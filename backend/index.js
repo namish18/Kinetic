@@ -1,14 +1,20 @@
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-const dotenv = require('dotenv');
-const session = require('express-session');
-const passport = require('./config/passport');
-const connectDB = require('./config/connectdb');
-const authRoutes = require('./routes/auth');
+import express from 'express';
+import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
+import dotenv from 'dotenv';
+import session from 'express-session';
+import passport from './config/passport.js';
+import connectDB from './config/connectdb.js';
+import authRoutes from './routes/auth.js';
 
 // Load env vars
 dotenv.config();
+
+// ESM __dirname shim
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Connect to database
 connectDB();
@@ -16,65 +22,60 @@ connectDB();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(
-    cors({
-        origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-        credentials: true,
-    })
-);
+// ─── Middleware ──────────────────────────────────────────────
+app.use(cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:5000',
+    credentials: true,
+}));
 app.use(express.json());
 
 // Session (required for Passport OAuth flow)
-app.use(
-    session({
-        secret: process.env.SESSION_SECRET || 'kinetic-session-secret',
-        resave: false,
-        saveUninitialized: false,
-        cookie: {
-            maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        },
-    })
-);
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'kinetic-session-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { maxAge: 24 * 60 * 60 * 1000 }, // 24 hours
+}));
 
-// Initialize Passport
 app.use(passport.initialize());
 app.use(passport.session());
 
-// API Routes
+// ─── API Routes ──────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 
-// Serve frontend static files
+// ─── Static frontend ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
-// Health check route
-app.get('/health', (req, res) => {
-    res.status(200).send('OK');
-});
+// ─── Health / Info ───────────────────────────────────────────
+app.get('/health', (_req, res) => res.send('OK'));
 
-// API info route
-app.get('/api', (req, res) => {
+app.get('/api', (_req, res) => {
     res.json({
-        message: 'Kinetic Backend API is running',
+        message: 'Kinetic DID Identity API',
+        stack: {
+            didGeneration: 'key-did-provider-ed25519 (Ceramic / Protocol Labs)',
+            didResolution: 'key-did-resolver (Ceramic / Protocol Labs)',
+            ipfsStorage: '@web3-storage/w3up-client (Storacha / Protocol Labs)',
+        },
         endpoints: {
-            auth: {
-                githubLogin: 'GET /api/auth/github',
-                githubCallback: 'GET /api/auth/github/callback',
-                currentUser: 'GET /api/auth/me',
-                resolveDID: 'GET /api/auth/did/:username',
-                updateWallet: 'PUT /api/auth/wallet',
-                logout: 'GET /api/auth/logout',
-            },
+            'GET /api/auth/github': 'Begin GitHub OAuth flow',
+            'GET /api/auth/github/callback': 'OAuth callback (creates DID on first login)',
+            'GET /api/auth/me': 'Current user profile (JWT required)',
+            'GET /api/auth/did/:username': 'Resolve DID by GitHub username (public)',
+            'GET /api/auth/did-resolve/self': 'Re-resolve your DID live (JWT required)',
+            'PUT /api/auth/wallet': 'Link Flow wallet address (JWT required)',
+            'GET /api/auth/logout': 'Logout',
         },
     });
 });
 
-// SPA fallback — serve index.html for dashboard and other frontend routes
-app.get('*', (req, res) => {
+// ─── SPA fallback ────────────────────────────────────────────
+app.get('*', (_req, res) => {
     res.sendFile(path.join(__dirname, '..', 'frontend', 'index.html'));
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Server is running on port ${PORT}`);
-    console.log(`🔗 GitHub OAuth: http://localhost:${PORT}/api/auth/github`);
+    console.log(`\n🚀 Kinetic API running on http://localhost:${PORT}`);
+    console.log(`   🔗 Start login: http://localhost:${PORT}/api/auth/github`);
+    console.log(`   📖 API info:    http://localhost:${PORT}/api\n`);
 });
