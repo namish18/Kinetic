@@ -1,3 +1,17 @@
+import 'dotenv/config'; // ← must be first so all modules see env vars
+
+// ─── Promise.withResolvers Polyfill for Node v20 ─────────────
+if (!Promise.withResolvers) {
+    Promise.withResolvers = function () {
+        let resolve, reject;
+        const promise = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        return { promise, resolve, reject };
+    };
+}
+
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -9,8 +23,7 @@ import connectDB from './config/connectdb.js';
 import authRoutes from './routes/auth.js';
 import { stopHelia } from './services/didService.js';
 
-// Load env vars
-dotenv.config();
+// (env vars loaded via import 'dotenv/config' at top)
 
 // ESM __dirname shim
 const __filename = fileURLToPath(import.meta.url);
