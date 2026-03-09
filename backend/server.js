@@ -2,12 +2,12 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
 import dotenv from 'dotenv';
 import session from 'express-session';
 import passport from './config/passport.js';
 import connectDB from './config/connectdb.js';
 import authRoutes from './routes/auth.js';
+import { stopHelia } from './services/didService.js';
 
 // Load env vars
 dotenv.config();
@@ -55,7 +55,7 @@ app.get('/api', (_req, res) => {
         stack: {
             didGeneration: 'key-did-provider-ed25519 (Ceramic / Protocol Labs)',
             didResolution: 'key-did-resolver (Ceramic / Protocol Labs)',
-            ipfsStorage: '@web3-storage/w3up-client (Storacha / Protocol Labs)',
+            ipfsStorage: 'Helia in-process IPFS node (Protocol Labs) — no account needed',
         },
         endpoints: {
             'GET /api/auth/github': 'Begin GitHub OAuth flow',
@@ -77,5 +77,15 @@ app.get('*', (_req, res) => {
 app.listen(PORT, () => {
     console.log(`\n🚀 Kinetic API running on http://localhost:${PORT}`);
     console.log(`   🔗 Start login: http://localhost:${PORT}/api/auth/github`);
-    console.log(`   📖 API info:    http://localhost:${PORT}/api\n`);
+    console.log(`   📖 API info:    http://localhost:${PORT}/api`);
+    console.log(`   📦 IPFS:        Helia in-process node (Protocol Labs)\n`);
 });
+
+// ─── Graceful shutdown ───────────────────────────────────────
+async function shutdown(signal) {
+    console.log(`\n${signal} received — shutting down gracefully...`);
+    await stopHelia();
+    process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

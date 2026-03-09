@@ -1,37 +1,74 @@
 /**
- * DID Service — Protocol Labs Stack
+ * DID Service — Protocol Labs Stack (No Account / No API Key Required)
  *
- * Uses:
- *  - key-did-provider-ed25519 (Ceramic/Protocol Labs) for cryptographically
- *    secure did:key generation using Ed25519 keypairs
- *  - key-did-resolver (Ceramic/Protocol Labs) for W3C DID document resolution
- *  - dids package (Ceramic) for the DID interface / authentication
- *  - @web3-storage/w3up-client (Protocol Labs / Storacha) for IPFS storage
- *    using UCAN-based authorization — no Pinata, no third-party services
+ * DID generation:
+ *   ├── key-did-provider-ed25519  (Ceramic / Protocol Labs)
+ *   ├── key-did-resolver          (Ceramic / Protocol Labs)
+ *   └── dids                      (Ceramic / Protocol Labs)
  *
- * DID format produced: did:key:z6Mk...  (Ed25519 multibase)
- * Storage: IPFS via web3.storage (Storacha) — content-addressed, Filecoin-backed
+ * IPFS storage:
+ *   └── Helia  (Protocol Labs — official JS IPFS implementation)
+ *       ├── @helia/json  — stores JSON objects, returns real IPFS CIDs
+ *       ├── blockstore-fs — persists blocks to disk (./ipfs-store/blocks)
+ *       └── datastore-fs  — persists datastore to disk (./ipfs-store/data)
+ *
+ * No Storacha account, no Pinata, no API keys of any kind.
+ * Helia runs in-process, connects to the public IPFS network via libp2p/Bitswap,
+ * and announces stored blocks so any IPFS gateway can retrieve them.
  */
 
 import { DID } from 'dids';
 import { Ed25519Provider } from 'key-did-provider-ed25519';
 import KeyResolver from 'key-did-resolver';
 import * as crypto from 'node:crypto';
-import * as w3up from '@web3-storage/w3up-client';
-import * as Signer from '@ucanto/principal/ed25519';
-import { StoreMemory } from '@web3-storage/access/stores/store-memory';
+import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHelia } from 'helia';
+import { json as heliaJson } from '@helia/json';
+import { FsBlockstore } from 'blockstore-fs';
+import { FsDatastore } from 'datastore-fs';
 
-// ============================================================
-//  DID GENERATION  (Ceramic / Protocol Labs libraries)
-// ============================================================
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ─────────────────────────────────────────────────────────────
+//  Helia Node (lazy singleton)
+// ─────────────────────────────────────────────────────────────
+
+let _helia = null;
+let _heliaJson = null;
 
 /**
- * Generate a cryptographically secure 32-byte seed for the Ed25519 keypair.
- * We derive the seed deterministically from the (githubId + a server secret)
- * so the same GitHub user always gets the same DID across server restarts.
+ * Returns (and lazily creates) the shared Helia node.
  *
- * @param {string} githubId — GitHub numeric user ID
- * @returns {Uint8Array} 32-byte seed
+ * Uses FsBlockstore + FsDatastore so all IPFS blocks are persisted to disk
+ * at   <project-root>/ipfs-store/
+ * Surviving server restarts means blocks stay available for the network.
+ */
+async function getHelia() {
+    if (_helia) return { helia: _helia, j: _heliaJson };
+
+    const storePath = path.join(__dirname, '..', 'ipfs-store');
+
+    const blockstore = new FsBlockstore(path.join(storePath, 'blocks'));
+    const datastore = new FsDatastore(path.join(storePath, 'data'));
+
+    _helia = await createHelia({ blockstore, datastore });
+    _heliaJson = heliaJson(_helia);
+
+    console.log(`🌐 Helia IPFS node started (peer: ${_helia.libp2p.peerId.toString()})`);
+    return { helia: _helia, j: _heliaJson };
+}
+
+// ─────────────────────────────────────────────────────────────
+//  DID Generation  (Ceramic / Protocol Labs)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Derive a deterministic 32-byte Ed25519 seed for a given GitHub user.
+ * HMAC-SHA256(githubId, DID_SEED_SECRET) → same DID on every server restart.
+ *
+ * ⚠️  Never change DID_SEED_SECRET after users have registered — it would
+ *     give them a completely different did:key.
  */
 function deriveSeed(githubId) {
     const secret = process.env.DID_SEED_SECRET || 'kinetic-did-seed-secret-changeme';
@@ -40,49 +77,46 @@ function deriveSeed(githubId) {
 }
 
 /**
- * Authenticate a DID using the Ed25519Provider and key-did-resolver.
- * Returns the fully resolved did:key string and the resolved DID document.
+ * Generate and authenticate a real did:key from an Ed25519 keypair.
+ * Resolves the full W3C DID document via key-did-resolver.
  *
- * @param {string} githubId
- * @returns {{ did: DID, didString: string, didDocument: Object }}
+ * @param {string|number} githubId
+ * @returns {{ didString: string, didDocument: Object, did: DID }}
  */
 async function authenticateDID(githubId) {
     const seed = deriveSeed(githubId);
     const provider = new Ed25519Provider(seed);
-
-    const did = new DID({
-        provider,
-        resolver: KeyResolver.getResolver(),
-    });
+    const did = new DID({ provider, resolver: KeyResolver.getResolver() });
 
     await did.authenticate();
 
     // Resolve the full W3C DID document
     const resolution = await did.resolve(did.id);
-    const didDocument = resolution.didDocument;
 
-    return { did, didString: did.id, didDocument };
+    return {
+        did,
+        didString: did.id,
+        didDocument: resolution.didDocument,
+    };
 }
 
 /**
- * Build the enriched identity document we store on IPFS.
- * This wraps the W3C DID document with GitHub profile metadata.
+ * Compose the enriched identity document we store on IPFS.
+ * Merges the W3C DID document with GitHub profile metadata.
  *
- * @param {Object} githubProfile - GitHub OAuth profile (passport-github2 format)
- * @param {string} didString     - e.g. "did:key:z6Mk..."
- * @param {Object} didDocument   - W3C DID document from key-did-resolver
- * @param {string|null} wallet   - optional Flow wallet address
- * @returns {Object}
+ * @param {Object}      githubProfile
+ * @param {string}      didString
+ * @param {Object}      didDocument   — from key-did-resolver
+ * @param {string|null} wallet
  */
 function buildIdentityDocument(githubProfile, didString, didDocument, wallet = null) {
     const githubUsername = githubProfile.username || githubProfile.login;
-
     return {
         '@context': [
             'https://www.w3.org/ns/did/v1',
             'https://schema.org',
         ],
-        // W3C DID document (resolved from did:key)
+        // W3C DID document fields (id, verificationMethod, authentication…)
         ...didDocument,
         // Kinetic-specific metadata
         github: githubUsername,
@@ -94,127 +128,107 @@ function buildIdentityDocument(githubProfile, didString, didDocument, wallet = n
     };
 }
 
-// ============================================================
-//  IPFS STORAGE  (Protocol Labs / Storacha — w3up-client)
-// ============================================================
+// ─────────────────────────────────────────────────────────────
+//  IPFS Storage  (Helia — Protocol Labs)
+// ─────────────────────────────────────────────────────────────
 
 /**
- * Initialise the w3up-client using a server-side agent whose private key
- * is stored in the environment variable W3UP_PRINCIPAL_KEY.
+ * Store an identity document on IPFS using Helia (@helia/json).
  *
- * If the env var is missing we fall back to a fresh in-memory agent each
- * startup — useful for local dev, but the agent won't have any delegations.
+ * Helia's dag-json codec produces a CIDv1 (bafyrei…) — the same kind of
+ * content-addressed CID that any IPFS gateway or peer can retrieve.
  *
- * @returns {import('@web3-storage/w3up-client').Client}
- */
-async function getW3upClient() {
-    const principalKey = process.env.W3UP_PRINCIPAL_KEY;
-    const spaceDID = process.env.W3UP_SPACE_DID;
-
-    let client;
-
-    if (principalKey) {
-        // Production: use a server-side Ed25519 signer persisted in env var
-        const principal = Signer.parse(principalKey);
-        client = await w3up.create({
-            principal,
-            store: new StoreMemory(),
-        });
-    } else {
-        // Dev: ephemeral agent (no uploads will succeed without a registered space)
-        client = await w3up.create({ store: new StoreMemory() });
-        console.warn('⚠️  W3UP_PRINCIPAL_KEY not set — w3up uploads will fail');
-    }
-
-    // Set the current space if configured
-    if (spaceDID) {
-        try {
-            await client.setCurrentSpace(spaceDID);
-        } catch (e) {
-            console.warn(`⚠️  Could not set space ${spaceDID}: ${e.message}`);
-        }
-    }
-
-    return client;
-}
-
-/**
- * Upload an identity document as JSON to IPFS via Storacha (Protocol Labs).
- * Returns the root CID of the uploaded file.
- *
- * @param {Object} identityDocument
- * @returns {Promise<string>} IPFS CID string
+ * @param  {Object} identityDocument
+ * @returns {Promise<string>} CID string (e.g. "bafyreidxyz…")
  */
 async function uploadToIPFS(identityDocument) {
-    const json = JSON.stringify(identityDocument, null, 2);
-
-    // Skip real upload in development if not configured
-    if (!process.env.W3UP_PRINCIPAL_KEY || !process.env.W3UP_SPACE_DID) {
-        console.warn('⚠️  W3UP_PRINCIPAL_KEY / W3UP_SPACE_DID not set — computing content CID locally (no upload)');
-        return computeLocalCID(json);
-    }
-
     try {
-        const client = await getW3upClient();
+        const { j } = await getHelia();
 
-        // Upload the JSON blob as a single file
-        const blob = new Blob([json], { type: 'application/json' });
-        const file = new File([blob], `${identityDocument.id || 'did'}.json`, {
-            type: 'application/json',
-        });
+        // j.add() hashes the JSON with dag-json, stores the block locally,
+        // and announces it to connected IPFS peers via Bitswap.
+        const cid = await j.add(identityDocument);
+        const cidStr = cid.toString();
 
-        const cid = await client.uploadFile(file);
-        const cidString = cid.toString();
+        console.log(`✅ Identity document stored on IPFS via Helia`);
+        console.log(`   CID: ${cidStr}`);
+        console.log(`   🌐 Gateway: https://ipfs.io/ipfs/${cidStr}`);
+        console.log(`   🌐 Gateway: https://dweb.link/ipfs/${cidStr}`);
 
-        console.log(`✅ Identity document uploaded to IPFS (Storacha): ${cidString}`);
-        console.log(`   🌐 Gateway URL: https://w3s.link/ipfs/${cidString}`);
-
-        return cidString;
-    } catch (error) {
-        console.error('❌ Storacha upload failed:', error.message);
-        // Return a deterministic local CID so the system stays functional
-        return computeLocalCID(json);
+        return cidStr;
+    } catch (err) {
+        console.error('❌ Helia IPFS storage failed:', err.message);
+        // Fallback: deterministic SHA-256 fingerprint (no network dependency)
+        const digest = crypto
+            .createHash('sha256')
+            .update(JSON.stringify(identityDocument))
+            .digest('hex');
+        const fallback = `sha256-${digest}`;
+        console.warn(`⚠️  Using local SHA-256 CID fallback: ${fallback}`);
+        return fallback;
     }
 }
 
 /**
- * Retrieve an identity document from IPFS using the public w3s.link gateway
- * (operated by Protocol Labs / Storacha).
+ * Retrieve an identity document from the local Helia blockstore first,
+ * then fall back to public IPFS gateways (ipfs.io, dweb.link — Protocol Labs).
  *
- * @param {string} cid
+ * @param  {string} cidStr
  * @returns {Promise<Object|null>}
  */
-async function getFromIPFS(cid) {
-    // Dual gateway: prefer w3s.link (Storacha), fallback to dweb.link (Protocol Labs)
+async function getFromIPFS(cidStr) {
+    if (!cidStr || cidStr.startsWith('sha256-')) return null;
+
+    // 1. Try local Helia node first (instant if we stored it)
+    try {
+        const { j } = await getHelia();
+        const { CID } = await import('multiformats/cid');
+        const cid = CID.parse(cidStr);
+        const obj = await j.get(cid);
+        if (obj) {
+            console.log(`📦 Retrieved from local Helia node: ${cidStr}`);
+            return obj;
+        }
+    } catch {
+        // block not in local store — try gateways
+    }
+
+    // 2. Fall back to public Protocol Labs IPFS gateways
     const gateways = [
-        `https://w3s.link/ipfs/${cid}`,
-        `https://dweb.link/ipfs/${cid}`,
-        `https://ipfs.io/ipfs/${cid}`,
+        `https://ipfs.io/ipfs/${cidStr}`,
+        `https://dweb.link/ipfs/${cidStr}`,
+        `https://cloudflare-ipfs.com/ipfs/${cidStr}`,
     ];
 
     for (const url of gateways) {
         try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-            if (res.ok) return await res.json();
+            const res = await fetch(url, {
+                signal: AbortSignal.timeout(8_000),
+                headers: { Accept: 'application/json' },
+            });
+            if (res.ok) {
+                console.log(`📦 Retrieved from IPFS gateway: ${url}`);
+                return await res.json();
+            }
         } catch {
             // try next gateway
         }
     }
 
-    console.warn(`⚠️  Could not retrieve ${cid} from any IPFS gateway`);
+    console.warn(`⚠️  Could not retrieve ${cidStr} from Helia or any gateway`);
     return null;
 }
 
 /**
- * Compute a content-based SHA-256 hex digest when real IPFS upload isn't
- * available. Prefixed with "sha256-" to make it clear it's not a real CID.
- *
- * @param {string} json
- * @returns {string}
+ * Gracefully stop the Helia node (call on process exit).
  */
-function computeLocalCID(json) {
-    const digest = crypto.createHash('sha256').update(json).digest('hex');
-    return `sha256-${digest}`;
+async function stopHelia() {
+    if (_helia) {
+        await _helia.stop();
+        _helia = null;
+        _heliaJson = null;
+        console.log('🛑 Helia IPFS node stopped');
+    }
 }
 
 export {
@@ -222,4 +236,5 @@ export {
     buildIdentityDocument,
     uploadToIPFS,
     getFromIPFS,
+    stopHelia,
 };

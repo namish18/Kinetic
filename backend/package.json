@@ -18,11 +18,12 @@
     "express-session": "^1.17.3",
     "jsonwebtoken": "^9.0.2",
     "dids": "^5.0.3",
-    "key-did-provider-ed25519": "^3.0.1",
-    "key-did-resolver": "^3.0.1",
-    "@web3-storage/w3up-client": "^16.5.2",
-    "@ucanto/principal": "^8.1.0",
-    "@web3-storage/access": "^19.0.0"
+    "key-did-provider-ed25519": "^4.0.0",
+    "key-did-resolver": "^4.0.0",
+    "helia": "^4.2.6",
+    "@helia/json": "^3.0.6",
+    "blockstore-fs": "^2.0.1",
+    "datastore-fs": "^10.0.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
