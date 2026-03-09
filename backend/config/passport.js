@@ -2,15 +2,16 @@
  * Passport GitHub OAuth Strategy
  *
  * On first login:
- *  1. Derives an Ed25519 seed from the user's GitHub ID (+ server secret)
- *  2. Generates a real did:key using key-did-provider-ed25519 (Ceramic / Protocol Labs)
- *  3. Resolves the W3C DID document using key-did-resolver
- *  4. Builds an enriched identity document (DID doc + GitHub metadata)
- *  5. Uploads  it to IPFS via @web3-storage/w3up-client (Protocol Labs / Storacha)
- *  6. Persists the DID + CID reference in MongoDB
+ *  1. Derives Ed25519 seed from GitHub ID + DID_SEED_SECRET (HMAC-SHA256)
+ *  2. Generates a real did:key (Ed25519) via tweetnacl + multiformats
+ *  3. Uploads enriched identity document to IPFS via Helia (Protocol Labs)
+ *  4. Persists the DID + CID reference in MongoDB
  *
- * Returning users are simply looked up by their GitHub ID.
+ * Returning users are looked up by githubId — no re-processing needed.
  */
+
+// ⚠️  MUST be first: loads .env before GitHubStrategy reads process.env
+import 'dotenv/config';
 
 import passport from 'passport';
 import { Strategy as GitHubStrategy } from 'passport-github2';
@@ -57,9 +58,9 @@ passport.use(
                 console.log(`\n🆕 New user: @${profile.username} — running DID + IPFS pipeline`);
 
                 // Step 1 & 2: Generate did:key from Ed25519 keypair
-                // (key-did-provider-ed25519 from Ceramic / Protocol Labs)
-                const { didString, didDocument } = await authenticateDID(profile.id);
-                console.log(`   🔑 DID generated (did:key):  ${didString}`);
+                // (tweetnacl Ed25519 + multiformats base58btc — Protocol Labs stack)
+                const { didString, didDocument } = authenticateDID(profile.id); // sync
+                console.log(`   🔑 did:key: ${didString}`);
 
                 // Step 3: Build enriched identity document
                 const identityDoc = buildIdentityDocument(profile, didString, didDocument);
