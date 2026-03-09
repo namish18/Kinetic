@@ -16,9 +16,9 @@ export default function AuthPage() {
     useEffect(() => setMounted(true), []);
 
     const handleLogin = () => {
-        setLoggedIn(true);
-        setTimeout(() => setShowDID(true), 800);
-        setTimeout(() => router.push("/dashboard"), 3000);
+        // Redirect to the backend OAuth route
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+        window.location.href = `${apiUrl}/api/auth/github`;
     };
 
     if (!mounted) return null;
