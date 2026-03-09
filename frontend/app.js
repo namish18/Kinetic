@@ -99,7 +99,15 @@ function renderDashboard(user) {
 
     // Stats
     document.getElementById('stat-did').textContent = user.did;
-    document.getElementById('stat-ipfs').textContent = truncateCID(user.ipfsCID);
+
+    // Show IPFS CID with link to Storacha/Protocol Labs gateway
+    const ipfsCID = user.ipfsCID;
+    const ipfsEl = document.getElementById('stat-ipfs');
+    if (ipfsCID && !ipfsCID.startsWith('sha256-')) {
+        ipfsEl.innerHTML = `<a href="https://w3s.link/ipfs/${ipfsCID}" target="_blank" style="color:#a5b4fc;text-decoration:none" title="View on IPFS (Storacha / Protocol Labs)">${truncateCID(ipfsCID)} ↗</a>`;
+    } else {
+        ipfsEl.textContent = truncateCID(ipfsCID) + (ipfsCID?.startsWith('sha256-') ? ' (local)' : '');
+    }
     document.getElementById('stat-created').textContent = new Date(user.createdAt).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
@@ -222,24 +230,23 @@ function showToast(message, type = 'success') {
 //  Typing Animation (Login Page)
 // ===================================
 function startTypingAnimation() {
-    const names = ['alice', 'bob-dev', 'carol', 'dave-oss', 'eve'];
-    const githubs = ['alice-dev', 'bob-builder', 'carol-code', 'dave-contrib', 'eve-hacker'];
+    const didSuffixes = ['haXgBZDvo...', 'tvqCyLxTs...', 'snoFgjKA8...', 'nWR2n4Qxt...'];
+    const githubs = ['alice-dev', 'bob-builder', 'carol-code', 'dave-contrib'];
     let index = 0;
 
     setInterval(() => {
-        index = (index + 1) % names.length;
+        index = (index + 1) % githubs.length;
         const didEl = document.getElementById('typing-did');
         const githubEl = document.getElementById('typing-github');
 
         if (didEl && githubEl) {
-            // Fade out
             didEl.style.opacity = '0';
             githubEl.style.opacity = '0';
             didEl.style.transition = 'opacity 0.3s';
             githubEl.style.transition = 'opacity 0.3s';
 
             setTimeout(() => {
-                didEl.textContent = names[index];
+                didEl.textContent = didSuffixes[index];
                 githubEl.textContent = githubs[index];
                 didEl.style.opacity = '1';
                 githubEl.style.opacity = '1';
