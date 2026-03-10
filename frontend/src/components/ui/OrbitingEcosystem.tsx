@@ -138,8 +138,8 @@ const OrbitingSkill = memo(({ config, angle }: OrbitingSkillProps) => {
     const [isHovered, setIsHovered] = useState(false);
     const { orbitRadius, size, iconType, label } = config;
 
-    const x = Math.cos(angle) * orbitRadius;
-    const y = Math.sin(angle) * orbitRadius;
+    const x = Number((Math.cos(angle) * orbitRadius).toFixed(4));
+    const y = Number((Math.sin(angle) * orbitRadius).toFixed(4));
 
     return (
         <div
@@ -147,7 +147,9 @@ const OrbitingSkill = memo(({ config, angle }: OrbitingSkillProps) => {
             style={{
                 width: `${size}px`,
                 height: `${size}px`,
-                transform: `translate(calc(${x}px - 50%), calc(${y}px - 50%))`,
+                marginLeft: `${-size / 2}px`,
+                marginTop: `${-size / 2}px`,
+                transform: `translate(${x}px, ${y}px)`,
                 zIndex: isHovered ? 20 : 10,
             }}
             onMouseEnter={() => setIsHovered(true)}
