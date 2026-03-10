@@ -32,7 +32,7 @@ uniform vec2 uMouse;
 #define PI 3.1415926538
 
 const int u_line_count = 40;
-const float u_line_width = 7.0;
+const float u_line_width = 10.0;
 const float u_line_blur = 10.0;
 
 float Perlin2D(vec2 P) {
@@ -145,7 +145,7 @@ const Threads: React.FC<ThreadsProps> = ({
     useEffect(() => {
         const isDefault = color[0] === 1 && color[1] === 1 && color[2] === 1;
         const newColor = isDefault
-            ? (resolvedTheme === 'dark' ? [0.6, 0.8, 1.0] : [0.0, 0.0, 0.0])
+            ? (resolvedTheme === 'dark' ? [1.0, 1.0, 1.0] : [0.0, 0.0, 0.0])
             : color;
 
         setThemeColor(newColor);

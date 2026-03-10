@@ -5,7 +5,7 @@ import DotGrid from "@/components/DotGrid";
 
 export default function LoginPage() {
     return (
-        <div className="flex-1 flex items-center justify-center min-h-[90vh] py-24 px-6 relative bg-background overflow-hidden">
+        <div className="grid place-items-center min-h-screen w-full relative bg-background overflow-hidden p-6">
             <DotGrid
                 className="absolute inset-0 opacity-30 z-0"
                 baseColor="hsl(var(--muted-foreground))"
@@ -14,7 +14,7 @@ export default function LoginPage() {
                 proximity={100}
             />
 
-            <div className="w-full max-w-md bg-card/80 backdrop-blur-xl border border-border p-8 md:p-12 rounded-[2rem] shadow-2xl relative z-10 animate-scale-in">
+            <div className="w-full max-w-md bg-card/80 backdrop-blur-xl border border-border p-8 md:p-12 rounded-[2rem] shadow-2xl relative z-20">
                 <div className="flex flex-col items-center mb-8">
                     <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
                         <Fingerprint className="w-8 h-8 text-primary" />

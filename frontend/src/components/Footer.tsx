@@ -9,6 +9,7 @@ import {
     Mail,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Globe } from "@/components/ui/globe";
 
 interface FooterLink {
     label: string;
@@ -42,11 +43,12 @@ export const Footer = ({
         { icon: <Mail />, href: "mailto:hello@kinetic.com", label: "Email" },
     ],
     navLinks = [
-        { label: "Dashboard", href: "/dashboard" },
-        { label: "Org Dashboard", href: "/org-dashboard" },
+        { label: "Home", href: "/" },
         { label: "Registry", href: "/registry" },
         { label: "Bounties", href: "/bounties" },
         { label: "Docs", href: "/docs" },
+        { label: "Login", href: "/login" },
+        { label: "Signup", href: "/signup" },
     ],
     creatorName = "Team Kinetic",
     creatorUrl = "#",
@@ -125,22 +127,25 @@ export const Footer = ({
 
                 {/* Large background text */}
                 <div
-                    className="font-heading bg-gradient-to-b from-foreground/20 via-foreground/5 to-transparent bg-clip-text text-transparent leading-none absolute left-1/2 -translate-x-1/2 bottom-20 md:bottom-12 font-extrabold tracking-tighter pointer-events-none select-none text-center px-4"
+                    className="font-heading bg-gradient-to-b from-foreground/90 via-foreground/40 to-transparent bg-clip-text text-transparent leading-none absolute left-1/2 -translate-x-1/2 bottom-[80px] md:bottom-[100px] font-black tracking-tighter pointer-events-none select-none text-center px-4 z-30"
                     style={{
-                        fontSize: 'clamp(5rem, 25vw, 20rem)',
+                        fontSize: 'clamp(5rem, 25vw, 22rem)',
                         whiteSpace: 'nowrap'
                     }}
                 >
                     {brandName.toUpperCase()}
                 </div>
 
-                {/* Bottom logo removed */}
+                {/* Rising Globe effect at the bottom */}
+                <div className="absolute -bottom-[600px] left-1/2 -translate-x-1/2 w-full max-w-[1600px] h-[1200px] pointer-events-none overflow-hidden opacity-30 z-10">
+                    <Globe className="top-0" />
+                </div>
 
                 {/* Bottom line */}
-                <div className="absolute bottom-32 sm:bottom-34 backdrop-blur-sm h-1 bg-gradient-to-r from-transparent via-border to-transparent w-full left-1/2 -translate-x-1/2"></div>
+                <div className="absolute bottom-32 sm:bottom-34 backdrop-blur-sm h-1 bg-gradient-to-r from-transparent via-border to-transparent w-full left-1/2 -translate-x-1/2 z-20"></div>
 
                 {/* Bottom shadow */}
-                <div className="bg-gradient-to-t from-background via-background/80 blur-[1em] to-background/40 absolute bottom-28 w-full h-24 pointer-events-none"></div>
+                <div className="bg-gradient-to-t from-background via-background/80 blur-[1em] to-background/40 absolute bottom-28 w-full h-24 pointer-events-none z-20"></div>
             </footer>
         </section>
     );

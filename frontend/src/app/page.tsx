@@ -3,7 +3,7 @@ import SplitText from "@/components/SplitText";
 import BlurText from "@/components/BlurText";
 import DotGrid from "@/components/DotGrid";
 import LogoLoop from "@/components/LogoLoop";
-import OrbitImages from "@/components/OrbitImages";
+import OrbitingEcosystem from "@/components/ui/OrbitingEcosystem";
 import { Github, Wallet, Fingerprint, Activity, Award, Briefcase, Zap, Star, ShieldCheck, ArrowRight } from "lucide-react";
 import Link from "next/link";
 
@@ -50,8 +50,8 @@ export default function LandingPage() {
             />
 
             <SplitText
-              text="Your Commits Deserve Capital"
-              className="text-[64px] md:text-[140px] font-black font-sans tracking-[-0.08em] leading-[0.85] text-foreground drop-shadow-sm max-w-[1250px] px-4"
+              text="Your Commits <span class='italic font-serif text-primary/90'>Deserve Capital</span>"
+              className="text-[48px] md:text-[92px] font-black font-sans tracking-[-0.08em] leading-[0.85] text-foreground drop-shadow-sm max-w-[1250px] px-4"
               delay={40}
               duration={0.9}
               ease="power4.out"
@@ -97,7 +97,7 @@ export default function LandingPage() {
         />
         <div className="max-w-7xl mx-auto px-6 relative z-10">
           <div className="text-center space-y-4 mb-20 animate-slide-up">
-            <h2 className="text-4xl md:text-5xl font-black font-heading">The Open-Source Funding Pipeline</h2>
+            <h2 className="text-4xl md:text-5xl font-black font-heading">The Open-Source <span className="italic font-serif">Funding Pipeline</span></h2>
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
               We analyze your impact algorithmically and compensate you through smart contracts.
             </p>
@@ -141,7 +141,7 @@ export default function LandingPage() {
       <section className="relative py-32 bg-card overflow-hidden border-y border-border">
         <div className="max-w-7xl mx-auto px-6 relative z-10">
           <div className="text-center space-y-4 mb-20">
-            <h2 className="text-4xl md:text-5xl font-black font-heading">The Un-Gameable Engine</h2>
+            <h2 className="text-4xl md:text-5xl font-black font-heading">The <span className="italic font-serif">Un-Gameable</span> Engine</h2>
             <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
               Our Multi-Signal Triangulation Score (MSTS) evaluates 5 independent signal layers that must all mathematically agree. Fake stars and bots won't save you here.
             </p>
@@ -211,37 +211,13 @@ export default function LandingPage() {
       <section className="relative py-24 overflow-hidden bg-secondary/10 border-y border-border">
         <div className="max-w-7xl mx-auto px-6 relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-6">
-            <h2 className="text-4xl md:text-5xl font-black font-heading">Seamless Integration Ecosystem</h2>
+            <h2 className="text-4xl md:text-5xl font-black font-heading">Seamless <span className="italic font-serif">Integration</span> Ecosystem</h2>
             <p className="text-xl text-muted-foreground">
               Connect the tools you already use. Link your GitHub to mint your DID, settle bounties via Stripe, sequence data on Filecoin, and leverage Protocol Labs infrastructure for governance.
             </p>
           </div>
           <div className="flex items-center justify-center relative min-h-[400px]">
-            <OrbitImages
-              images={[
-                <Github key="github" className="w-12 h-12 text-foreground" />,
-                "https://cryptologos.cc/logos/filecoin-fil-logo.svg?v=040",
-                "https://upload.wikimedia.org/wikipedia/commons/b/ba/Stripe_Logo%2C_revised_2016.svg",
-                <Fingerprint key="fingerprint" className="w-12 h-12 text-primary" />,
-                "https://cdn.brandfetch.io/idf59FzkOR/theme/dark/symbol.svg?c=1dxbfHSJFAPEGdO279I",
-              ]}
-              shape="circle"
-              radius={140}
-              rotation={-15}
-              duration={20}
-              itemSize={60}
-              responsive={false}
-              direction="normal"
-              fill={true}
-              showPath={true}
-              pathColor="hsl(var(--primary))"
-              pathWidth={1}
-              centerContent={
-                <div className="w-24 h-24 rounded-full bg-background border border-border shadow-glow flex items-center justify-center z-20">
-                  <span className="font-heading font-bold text-2xl tracking-tighter">Kinetic</span>
-                </div>
-              }
-            />
+            <OrbitingEcosystem />
           </div>
         </div>
       </section>
@@ -251,7 +227,7 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 relative z-10">
           <div className="flex flex-col md:flex-row items-center justify-between mb-24">
             <div className="max-w-xl mb-10 md:mb-0">
-              <h2 className="text-4xl md:text-5xl font-black font-heading mb-6">How It Works</h2>
+              <h2 className="text-4xl md:text-5xl font-black font-heading mb-6">How It <span className="italic font-serif">Works</span></h2>
               <p className="text-xl text-muted-foreground">
                 Four simple steps to turn your open-source contributions into tangible capital. No more begging for donations—just push code and get paid.
               </p>
@@ -316,7 +292,7 @@ export default function LandingPage() {
         />
         <div className="max-w-7xl mx-auto px-6 relative z-10">
           <div className="text-center mb-20 animate-slide-up">
-            <h2 className="text-4xl md:text-5xl font-black font-heading">Trusted by Maintainers</h2>
+            <h2 className="text-4xl md:text-5xl font-black font-heading">Trusted by <span className="italic font-serif">Maintainers</span></h2>
             <p className="text-xl text-muted-foreground mt-4">Real developers building the open architecture of tomorrow.</p>
           </div>
 
@@ -368,7 +344,7 @@ export default function LandingPage() {
       <section className="py-32 bg-primary text-primary-foreground text-center relative overflow-hidden">
         <div className="absolute inset-0 bg-black/10 z-0"></div>
         <div className="max-w-4xl mx-auto px-6 relative z-10 space-y-8 flex flex-col items-center animate-slide-up">
-          <h2 className="text-5xl md:text-7xl font-black font-heading drop-shadow-lg">Build the Future. <br /> Get Paid Today.</h2>
+          <h2 className="text-5xl md:text-7xl font-black font-heading drop-shadow-lg">Build the <span className="italic font-serif">Future</span>. <br /> Get Paid <span className="italic font-serif">Today</span>.</h2>
           <p className="text-xl md:text-2xl max-w-2xl opacity-90 font-medium">Join thousands of developers turning their open-source commits into a sustainable career.</p>
           <Link
             href="/onboarding"
