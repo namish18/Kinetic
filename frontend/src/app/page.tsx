@@ -219,10 +219,10 @@ export default function LandingPage() {
           <div className="flex items-center justify-center relative min-h-[400px]">
             <OrbitImages
               images={[
-                <Github className="w-12 h-12 text-foreground" />,
+                <Github key="github" className="w-12 h-12 text-foreground" />,
                 "https://cryptologos.cc/logos/filecoin-fil-logo.svg?v=040",
                 "https://upload.wikimedia.org/wikipedia/commons/b/ba/Stripe_Logo%2C_revised_2016.svg",
-                <Fingerprint className="w-12 h-12 text-primary" />,
+                <Fingerprint key="fingerprint" className="w-12 h-12 text-primary" />,
                 "https://cdn.brandfetch.io/idf59FzkOR/theme/dark/symbol.svg?c=1dxbfHSJFAPEGdO279I",
               ]}
               shape="circle"
