@@ -138,6 +138,76 @@ export default function LandingPage() {
       </section>
 
       {/* Ecosystem Section */}
+      <section className="relative py-32 bg-card overflow-hidden border-y border-border">
+        <div className="max-w-7xl mx-auto px-6 relative z-10">
+          <div className="text-center space-y-4 mb-20">
+            <h2 className="text-4xl md:text-5xl font-black font-heading">The Un-Gameable Engine</h2>
+            <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
+              Our Multi-Signal Triangulation Score (MSTS) evaluates 5 independent signal layers that must all mathematically agree. Fake stars and bots won't save you here.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-16">
+            {[
+              { title: "Temporal Decay", percent: "25%", desc: "Commits are weighted by a recency curve. Active code gets paid." },
+              { title: "Blast Radius", percent: "30%", desc: "Breadth-first search of your downstream dependency tree." },
+              { title: "Code Survival", percent: "20%", desc: "Code churn analysis. Did your lines survive untouched for a year?" },
+              { title: "Issue Velocity", percent: "15%", desc: "How fast you close severe issues, weighted by priority label." },
+              { title: "Portability", percent: "10%", desc: "Cross-ecosystem adoption tracking across npm, PyPI, and Crates." }
+            ].map((layer, i) => (
+              <div key={i} className="bg-background border border-border rounded-3xl p-6 shadow-sm hover:border-primary/50 transition-colors flex flex-col justify-between">
+                <div>
+                  <div className="text-primary font-mono font-bold text-xl mb-2">{layer.percent}</div>
+                  <h4 className="font-bold text-lg mb-3">{layer.title}</h4>
+                </div>
+                <p className="text-sm text-muted-foreground">{layer.desc}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-primary/5 border border-primary/20 rounded-3xl p-8 relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8 mb-8">
+            <div className="md:w-2/3 space-y-4">
+              <div className="inline-flex items-center space-x-2 bg-primary/20 text-primary px-3 py-1 rounded-full text-sm font-bold mb-2">
+                <ShieldCheck className="w-4 h-4" />
+                <span>Anti-Sybil Protocol</span>
+              </div>
+              <h3 className="text-3xl font-black">Proof-of-Build Verification</h3>
+              <p className="text-muted-foreground text-lg leading-relaxed">
+                No code is scored unless accompanied by a verified CI/CD execution trace. We dynamically query GitHub Actions and Vercel logs to mathematically prove your code compiled and ran successfully. No trace? Multiplier = 0.
+              </p>
+            </div>
+            <div className="md:w-1/3 bg-background border border-border p-5 rounded-2xl font-mono text-sm overflow-hidden text-muted-foreground w-full">
+              <div className="text-green-500 mb-2">{`> Verify execution trace...`}</div>
+              <div className="opacity-80 break-all">{`Status: COMPLETED`}</div>
+              <div className="opacity-80 break-all">{`Conclusion: SUCCESS`}</div>
+              <div className="text-primary font-bold mt-4">{`ProofOfBuild_Multiplier = 1.0`}</div>
+              <div className="text-green-500 font-bold mt-2">{`[ Score Authenticated ]`}</div>
+            </div>
+          </div>
+
+          <div className="bg-foreground text-background border border-border rounded-3xl p-8 relative overflow-hidden flex flex-col md:flex-row-reverse items-center justify-between gap-8">
+            <div className="md:w-2/3 space-y-4">
+              <div className="inline-flex items-center space-x-2 bg-background/20 text-secondary px-3 py-1 rounded-full text-sm font-bold mb-2">
+                <Wallet className="w-4 h-4" />
+                <span>Anti-Whale Protocol</span>
+              </div>
+              <h3 className="text-3xl font-black">Dependency-Weighted Quadratic Funding</h3>
+              <p className="text-muted-foreground text-lg leading-relaxed">
+                Token voting is fundamentally broken because it empowers "Whales". We use Quadratic Funding, but replace token volume with the square root of your MSTS Impact Score. A vibrant community of small developers will mathematically outcompete a single massive whale every single time.
+              </p>
+            </div>
+            <div className="md:w-1/3 bg-card border border-border p-5 rounded-2xl font-mono text-sm overflow-hidden text-muted-foreground w-full shadow-inner">
+              <div className="text-blue-500 mb-2">{`> Compute Distribution...`}</div>
+              <div className="opacity-80">{`Whale Score: 100 → w: 100`}</div>
+              <div className="opacity-80">{`Comm Score: 100 → w: 2500`}</div>
+              <div className="text-secondary font-bold mt-4">{`Whale Share: 3.8%`}</div>
+              <div className="text-green-500 font-bold mt-2">{`Community Share: 96.2%`}</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Ecosystem Section */}
       <section className="relative py-24 overflow-hidden bg-secondary/10 border-y border-border">
         <div className="max-w-7xl mx-auto px-6 relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-6">

@@ -21,6 +21,8 @@ import session from 'express-session';
 import passport from './config/passport.js';
 import connectDB from './config/connectdb.js';
 import authRoutes from './routes/auth.js';
+import contributionRoutes from './routes/contribution.js';
+import kineticRoutes from './routes/kinetic.js';
 import { stopHelia } from './services/didService.js';
 
 // (env vars loaded via import 'dotenv/config' at top)
@@ -55,6 +57,8 @@ app.use(passport.session());
 
 // ─── API Routes ──────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
+app.use('/api/contribution', contributionRoutes);
+app.use('/api/kinetic', kineticRoutes);
 
 // ─── Static frontend ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
