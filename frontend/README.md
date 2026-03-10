@@ -1,4 +1,4 @@
-
+anyone can implement this -- 
 use these components in other section headings 
 use this component Usage
 import BlurText from "./BlurText";
