@@ -1,184 +1,4 @@
-
-use these components in other section headings 
-use this component Usage
-import BlurText from "./BlurText";
-
-const handleAnimationComplete = () => {
-  console.log('Animation completed!');
-};
-
-<BlurText
-  text="Isn't this so cool?!"
-  delay={200}
-  animateBy="words"
-  direction="top"
-  onAnimationComplete={handleAnimationComplete}
-  className="text-2xl mb-8"
-/>
-code
-
-
-import { motion, Transition, Easing } from 'motion/react';
-import { useEffect, useRef, useState, useMemo } from 'react';
-
-type BlurTextProps = {
-  text?: string;
-  delay?: number;
-  className?: string;
-  animateBy?: 'words' | 'letters';
-  direction?: 'top' | 'bottom';
-  threshold?: number;
-  rootMargin?: string;
-  animationFrom?: Record<string, string | number>;
-  animationTo?: Array<Record<string, string | number>>;
-  easing?: Easing | Easing[];
-  onAnimationComplete?: () => void;
-  stepDuration?: number;
-};
-
-const buildKeyframes = (
-  from: Record<string, string | number>,
-  steps: Array<Record<string, string | number>>
-): Record<string, Array<string | number>> => {
-  const keys = new Set<string>([...Object.keys(from), ...steps.flatMap(s => Object.keys(s))]);
-
-  const keyframes: Record<string, Array<string | number>> = {};
-  keys.forEach(k => {
-    keyframes[k] = [from[k], ...steps.map(s => s[k])];
-  });
-  return keyframes;
-};
-
-const BlurText: React.FC<BlurTextProps> = ({
-  text = '',
-  delay = 200,
-  className = '',
-  animateBy = 'words',
-  direction = 'top',
-  threshold = 0.1,
-  rootMargin = '0px',
-  animationFrom,
-  animationTo,
-  easing = (t: number) => t,
-  onAnimationComplete,
-  stepDuration = 0.35
-}) => {
-  const elements = animateBy === 'words' ? text.split(' ') : text.split('');
-  const [inView, setInView] = useState(false);
-  const ref = useRef<HTMLParagraphElement>(null);
-
-  useEffect(() => {
-    if (!ref.current) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setInView(true);
-          observer.unobserve(ref.current as Element);
-        }
-      },
-      { threshold, rootMargin }
-    );
-    observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, [threshold, rootMargin]);
-
-  const defaultFrom = useMemo(
-    () =>
-      direction === 'top' ? { filter: 'blur(10px)', opacity: 0, y: -50 } : { filter: 'blur(10px)', opacity: 0, y: 50 },
-    [direction]
-  );
-
-  const defaultTo = useMemo(
-    () => [
-      {
-        filter: 'blur(5px)',
-        opacity: 0.5,
-        y: direction === 'top' ? 5 : -5
-      },
-      { filter: 'blur(0px)', opacity: 1, y: 0 }
-    ],
-    [direction]
-  );
-
-  const fromSnapshot = animationFrom ?? defaultFrom;
-  const toSnapshots = animationTo ?? defaultTo;
-
-  const stepCount = toSnapshots.length + 1;
-  const totalDuration = stepDuration * (stepCount - 1);
-  const times = Array.from({ length: stepCount }, (_, i) => (stepCount === 1 ? 0 : i / (stepCount - 1)));
-
-  return (
-    <p ref={ref} className={`blur-text ${className} flex flex-wrap`}>
-      {elements.map((segment, index) => {
-        const animateKeyframes = buildKeyframes(fromSnapshot, toSnapshots);
-
-        const spanTransition: Transition = {
-          duration: totalDuration,
-          times,
-          delay: (index * delay) / 1000,
-          ease: easing
-        };
-
-        return (
-          <motion.span
-            key={index}
-            initial={fromSnapshot}
-            animate={inView ? animateKeyframes : fromSnapshot}
-            transition={spanTransition}
-            onAnimationComplete={index === elements.length - 1 ? onAnimationComplete : undefined}
-            style={{
-              display: 'inline-block',
-              willChange: 'transform, filter, opacity'
-            }}
-          >
-            {segment === ' ' ? '\u00A0' : segment}
-            {animateBy === 'words' && index < elements.length - 1 && '\u00A0'}
-          </motion.span>
-        );
-      })}
-    </p>
-  );
-};
-
-export default BlurText;  and add this component in landing page 
-@beautifulMention
-
-
-Usage
-// Component created by Dominik Koch
-// https://x.com/dominikkoch
-
-import OrbitImages from './OrbitImages'
-
-const images = [
-  <!-- "https://picsum.photos/300/300?grayscale&random=1",
-  "https://picsum.photos/300/300?grayscale&random=2",
-  "https://picsum.photos/300/300?grayscale&random=3",
-  "https://picsum.photos/300/300?grayscale&random=4",
-  "https://picsum.photos/300/300?grayscale&random=5",
-  "https://picsum.photos/300/300?grayscale&random=6",
-];  use svg of github , stripe, did ,protocol labs and all   https://cryptologos.cc/logos/filecoin-fil-logo.svg?v=040 , <a href="https://iconscout.com/icons/stripe" class="text-underline font-size-sm" target="_blank">Stripe</a> by <a href="https://iconscout.com/contributors/icon-mafia" class="text-underline font-size-sm" target="_blank">Icon Mafia</a>  ,<a href="https://iconscout.com/icons/github" class="text-underline font-size-sm" target="_blank">Github</a> by <a href="https://iconscout.com/contributors/icon-mafia" class="text-underline font-size-sm">Icon Mafia</a> on <a href="https://iconscout.com" class="text-underline font-size-sm">IconScout</a> , https://brandfetch.com/protocol.ai?view=library&library=default&collection=logos&asset=idf59FzkOR&utm_source=https%253A%252F%252Fbrandfetch.com%252Fprotocol.ai&utm_medium=copyAction&utm_campaign=brandPageReferral,  -->
-
-<OrbitImages
-  images={images}
-  shape="ellipse"
-  radiusX={340}
-  radiusY={80}
-  rotation={-8}
-  duration={30}
-  itemSize={80}
-  responsive={true}
-  radius={160}
-  direction="normal"
-  fill
-  showPath
-  paused={false}
-/>
-code
-
-
-// Component created by Dominik Koch
-// https://x.com/dominikkoch
+"use client";
 
 import { useMemo, useEffect, useRef, useState, ReactNode } from 'react';
 import { motion, useMotionValue, useTransform, animate, MotionValue } from 'motion/react';
@@ -196,7 +16,7 @@ type OrbitShape =
   | 'custom';
 
 interface OrbitImagesProps {
-  images?: string[];
+  images?: (string | ReactNode)[];
   altPrefix?: string;
   shape?: OrbitShape;
   customPath?: string;
@@ -413,15 +233,20 @@ export default function OrbitImages({
   const containerWidth = responsive ? '100%' : (typeof width === 'number' ? width : '100%');
   const containerHeight = responsive ? 'auto' : (typeof height === 'number' ? height : (typeof width === 'number' ? width : 'auto'));
 
-  const items = images.map((src, index) => (
-    <img
-      key={src}
-      src={src}
-      alt={`${altPrefix} ${index + 1}`}
-      draggable={false}
-      className="w-full h-full object-contain"
-    />
-  ));
+  const items = images.map((src, index) => {
+    if (typeof src === 'string') {
+      return (
+        <img
+          key={index}
+          src={src as string}
+          alt={`${altPrefix} ${index + 1}`}
+          draggable={false}
+          className="w-full h-full object-contain"
+        />
+      );
+    }
+    return <div key={index} className="w-full h-full flex items-center justify-center">{src as ReactNode}</div>;
+  });
 
   return (
     <div
