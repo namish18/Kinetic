@@ -16,12 +16,12 @@ const TickerItem = ({ text }: { text: string }) => (
 
 export default function LandingPage() {
   const payouts = [
-    { node: <TickerItem text="Paid 2.4 FLOW to @alice for PR #124 on React" /> },
-    { node: <TickerItem text="Paid 5.1 FLOW to @bob for Issue #59 on Nextjs" /> },
-    { node: <TickerItem text="Paid 1.2 FLOW to @charlie for PR #802 on Tailwind" /> },
-    { node: <TickerItem text="Paid 8.9 FLOW to @dave for Issue #11 on Kubernetes" /> },
-    { node: <TickerItem text="Paid 3.0 FLOW to @eve for PR #42 on PyTorch" /> },
-    { node: <TickerItem text="Paid 0.5 FLOW to @frank for PR #77 on Vue" /> },
+    { node: <TickerItem text="Paid 2.4 FIL to @alice for PR #124 on React" /> },
+    { node: <TickerItem text="Paid 5.1 FIL to @bob for Issue #59 on Nextjs" /> },
+    { node: <TickerItem text="Paid 1.2 FIL to @charlie for PR #802 on Tailwind" /> },
+    { node: <TickerItem text="Paid 8.9 FIL to @dave for Issue #11 on Kubernetes" /> },
+    { node: <TickerItem text="Paid 3.0 FIL to @eve for PR #42 on PyTorch" /> },
+    { node: <TickerItem text="Paid 0.5 FIL to @frank for PR #77 on Vue" /> },
   ];
 
   return (
@@ -37,7 +37,7 @@ export default function LandingPage() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-500 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600"></span>
             </span>
-            <span>Now on the Flow Blockchain Testnet</span>
+            <span>Now on the Filecoin Blockchain Testnet</span>
           </div>
 
           <div className="space-y-6 flex flex-col items-center">
@@ -62,7 +62,7 @@ export default function LandingPage() {
           </div>
 
           <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl font-normal animate-fade-in opacity-80 leading-relaxed tracking-tight" style={{ animationDelay: '0.4s' }}>
-            Transform your open-source contributions into tangible assets with Kinetic. Verified commits, automated bounties, and decentralized funding.
+            Transform your open-source contributions into tangible assets with Kinetic. Verified commits, algorithmically scored impact, and decentralized FIL payouts.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-5 pt-4 animate-fade-in w-full sm:w-auto" style={{ animationDelay: '0.6s' }}>
@@ -128,9 +128,9 @@ export default function LandingPage() {
               <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mb-6">
                 <Award className="w-8 h-8 text-primary" />
               </div>
-              <h3 className="text-2xl font-bold font-heading mb-3">Flow Payout</h3>
+              <h3 className="text-2xl font-bold font-heading mb-3">FIL Payout</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Tokens stream directly into your wallet via Flow blockchain smart contracts. Fast finalized payouts, zero hidden fees, and entirely autonomous allocation.
+                Tokens stream directly into your wallet via Filecoin smart contracts. Fast finalized payouts, zero hidden fees, and entirely autonomous allocation.
               </p>
             </div>
           </div>
@@ -173,7 +173,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-3xl font-black">Proof-of-Build Verification</h3>
               <p className="text-muted-foreground text-lg leading-relaxed">
-                No code is scored unless accompanied by a verified CI/CD execution trace. We dynamically query GitHub Actions and Vercel logs to mathematically prove your code compiled and ran successfully. No trace? Multiplier = 0.
+                No code is scored unless accompanied by a verified CI/CD execution trace. We dynamically query GitHub Actions to mathematically prove your code compiled and ran successfully. No trace? Multiplier = 0.
               </p>
             </div>
             <div className="md:w-1/3 bg-background border border-border p-5 rounded-2xl font-mono text-sm overflow-hidden text-muted-foreground w-full">
@@ -213,7 +213,7 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h2 className="text-4xl md:text-5xl font-black font-heading">Seamless Integration Ecosystem</h2>
             <p className="text-xl text-muted-foreground">
-              Connect the tools you already use. Link your GitHub to mint your DID, settle bounties via Stripe, sequence data on Filecoin, and power governance with Protocol Labs architecture.
+              Connect the tools you already use. Link your GitHub to mint your DID, settle bounties via Stripe, sequence data on Filecoin, and leverage Protocol Labs infrastructure for governance.
             </p>
           </div>
           <div className="flex items-center justify-center relative min-h-[400px]">
@@ -335,7 +335,7 @@ export default function LandingPage() {
                 role: "React Ecosystem"
               },
               {
-                text: "I love that the funding is direct via Flow. No intermediary taking a 30% cut, no delays, no manual invoicing. I merge a PR, the value score updates, I withdraw. Beautiful.",
+                text: "I love that the funding is direct via Filecoin. No intermediary taking a 30% cut, no delays, no manual invoicing. I merge a PR, the value score updates, I withdraw. Beautiful.",
                 author: "Evan You",
                 handle: "@youyuxi",
                 role: "Creator of Vite"

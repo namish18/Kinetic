@@ -35,10 +35,11 @@ export default function RootLayout({
                 logo={<Hexagon className="w-full h-full text-white dark:text-black fill-foreground animate-[spin_4s_linear_infinite]" />}
                 items={[
                   { label: 'Home', href: '/' },
-                  { label: 'Registry', href: '/registry' },
                   { label: 'Dashboard', href: '/dashboard' },
+                  { label: 'Org Dashboard', href: '/org-dashboard' },
+                  { label: 'Registry', href: '/registry' },
                   { label: 'Bounties', href: '/bounties' },
-                  { label: 'Voting', href: '/voting' }
+                  { label: 'Docs', href: '/docs' }
                 ]}
                 baseColor="hsl(var(--card))"
                 pillColor="hsl(var(--muted))"

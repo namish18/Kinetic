@@ -42,10 +42,10 @@ export const Footer = ({
         { icon: <Mail />, href: "mailto:hello@kinetic.com", label: "Email" },
     ],
     navLinks = [
-        { label: "Registry", href: "/registry" },
         { label: "Dashboard", href: "/dashboard" },
+        { label: "Org Dashboard", href: "/org-dashboard" },
+        { label: "Registry", href: "/registry" },
         { label: "Bounties", href: "/bounties" },
-        { label: "Voting", href: "/voting" },
         { label: "Docs", href: "/docs" },
     ],
     creatorName = "Team Kinetic",

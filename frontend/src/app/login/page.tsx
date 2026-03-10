@@ -35,7 +35,7 @@ export default function LoginPage() {
                         <svg className="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 2C6.477.5 2 5 2 5v9c0 5 10 10 10 10s10-5 10-10V5s-4.477-4.5-10-3Zm0 17.5c-4.142-3.83-8-8.17-8-12.5V6.75C8 5.5 12 4 12 4s4 1.5 8 2.75V10c0 4.33-3.858 8.67-8 9.5Z" />
                         </svg>
-                        <span className="font-semibold text-foreground">Connect Flow Wallet</span>
+                        <span className="font-semibold text-foreground">Connect Filecoin Wallet</span>
                     </button>
                 </div>
 
