@@ -42,14 +42,7 @@ export const Footer = ({
         { icon: <Linkedin />, href: "https://linkedin.com", label: "LinkedIn" },
         { icon: <Mail />, href: "mailto:hello@kinetic.com", label: "Email" },
     ],
-    navLinks = [
-        { label: "Home", href: "/" },
-        { label: "Registry", href: "/registry" },
-        { label: "Bounties", href: "/bounties" },
-        { label: "Docs", href: "/docs" },
-        { label: "Login", href: "/login" },
-        { label: "Signup", href: "/signup" },
-    ],
+    navLinks = [],
     creatorName = "Team Kinetic",
     creatorUrl = "#",
     brandIcon,
@@ -91,19 +84,6 @@ export const Footer = ({
                                 </div>
                             )}
 
-                            {navLinks.length > 0 && (
-                                <div className="flex flex-wrap justify-center gap-4 text-sm font-medium text-muted-foreground max-w-full px-4">
-                                    {navLinks.map((link, index) => (
-                                        <Link
-                                            key={index}
-                                            className="hover:text-foreground duration-300 hover:font-semibold"
-                                            href={link.href}
-                                        >
-                                            {link.label}
-                                        </Link>
-                                    ))}
-                                </div>
-                            )}
                         </div>
                     </div>
 
@@ -144,8 +124,6 @@ export const Footer = ({
                 {/* Bottom line */}
                 <div className="absolute bottom-32 sm:bottom-34 backdrop-blur-sm h-1 bg-gradient-to-r from-transparent via-border to-transparent w-full left-1/2 -translate-x-1/2 z-20"></div>
 
-                {/* Bottom shadow */}
-                <div className="bg-gradient-to-t from-background via-background/80 blur-[1em] to-background/40 absolute bottom-28 w-full h-24 pointer-events-none z-20"></div>
             </footer>
         </section>
     );

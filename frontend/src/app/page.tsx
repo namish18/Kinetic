@@ -261,26 +261,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-24 bg-background relative border-b border-border">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 divide-y md:divide-y-0 md:divide-x divide-border">
-            <div className="flex flex-col items-center text-center pt-8 md:pt-0">
-              <span className="text-6xl font-black font-mono text-foreground drop-shadow-lg shadow-primary hover:shadow-glow-lg animate-glow-pulse mb-4">$4.2M</span>
-              <span className="text-lg font-medium text-muted-foreground uppercase tracking-widest break-words text-center">Total Paid Out</span>
-            </div>
-            <div className="flex flex-col items-center text-center pt-12 md:pt-0">
-              <span className="text-6xl font-black font-mono text-foreground drop-shadow-lg shadow-primary hover:shadow-glow-lg animate-glow-pulse mb-4" style={{ animationDelay: '0.4s' }}>1,409</span>
-              <span className="text-lg font-medium text-muted-foreground uppercase tracking-widest break-words text-center">Projects Funded</span>
-            </div>
-            <div className="flex flex-col items-center text-center pt-12 md:pt-0">
-              <span className="text-6xl font-black font-mono text-foreground drop-shadow-lg shadow-primary hover:shadow-glow-lg animate-glow-pulse mb-4" style={{ animationDelay: '0.8s' }}>8,024</span>
-              <span className="text-lg font-medium text-muted-foreground uppercase tracking-widest break-words text-center">Devs Rewarded</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* Testimonials */}
       <section className="py-32 bg-card relative overflow-hidden">
         <DotGrid
