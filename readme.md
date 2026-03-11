@@ -1,76 +1,72 @@
-# Kinetic: The Un-Gameable Contribution Algorithm 🧠
+# Kinetic: The Protocol Labs Contribution Engine 🧠
 
-Kinetic is a decentralized funding platform designed to fundamentally change how open-source developers are rewarded. Instead of relying on vanity metrics (stars, forks) or whale-dominated voting pools, Kinetic measures **real-world impact, verified execution, and mathematical fairness**.
+Kinetic is a specialized funding platform designed specifically for **Protocol Labs contributors**. It moves beyond generic metrics to measure the true engineering complexity and ecosystem impact of work across the PL network (IPFS, Filecoin, libp2p, and more).
 
-At the core of Kinetic is our proprietary algorithmic engine: the **Multi-Signal Triangulation Score (MSTS)** combined with **Proof-of-Build Verification** and **Dependency-Weighted Quadratic Funding**.
+At the core of Kinetic is the **Multi-Signal Triangulation Score (MSTS)**—a formula specifically tuned to reward high-leverage engineering tasks, cross-repo collaboration, and code durability.
 
 ---
 
 ## 1. The Core Engine: Multi-Signal Triangulation Score (MSTS)
 
-Instead of relying on a single metric, MSTS combines **5 independent signal layers** that must all mathematically agree. This triangulation makes gaming the system virtually impossible.
+Instead of relying on simple commit counts, MSTS triangulates **6 independent signal layers** to determine a contributor's monthly payout.
 
-Each developer is scored out of 100 based on the weighted sum of these layers:
+### Layer 1: Task Complexity Score  (30% Weight)
+*Our secret weapon. We measure how hard the problem actually was.*
+- **How it works:** 
+  - **Base:** Lines changed + files touched.
+  - **Review Load:** Number of review cycles before merge (friction = complexity).
+  - **Categorization:** Issues labeled `security`, `refactor`, or `feature` carry higher weights than standard `bug` or `doc` fixes.
+  - **Competition:** How many other PRs were attempting to solve the same issue.
+- **The Value:** Rewards the heavy lifters who tackle the hardest architectural challenges, not just "low-hanging fruit" gatherers.
 
-### Layer 1: Temporal Decay Weighting ⏳ (25% Weight)
-*Most platforms count total stars ever. We weight by a recency curve.*
-- **How it works:** Commits and PRs are decayed exponentially. A commit from last week retains 100% weight, while a commit from 3 years ago retains only ~10% weight ($`Score = \sum (metric\_value \times e^{-\lambda \times days\_since})`$).
-- **The Value:** Rewards active maintainers keeping projects alive, not abandoned repos that are historically popular.
-
-### Layer 2: Downstream Blast Radius 💥 (30% Weight)
-*Don't just count who depends on you — count how deep the dependency tree goes.*
-- **How it works:** A breadth-first search of the ecosystem dependency graph (e.g., npm). If React depends on your utility library, you get a weighted portion of React's massive user base.
-- **The Value:** Depth 1 dependents = 1.0x, Depth 2 = 0.6x, Depth 3 = 0.3x. Properly values foundational infrastructure code.
-
-### Layer 3: Code Survival Rate 🧬 (20% Weight)
+### Layer 2: Code Survival Rate  (20% Weight)
 *Measures code quality via historical churn analysis.*
-- **How it works:** Calculates what percentage of original lines written by the developer are still alive and unmodified in the codebase after 1 year.
-- **The Value:** If you wrote 1000 lines and 850 still exist untouched (85% survival), it proves your code was structurally sound and didn't need immediate rewriting.
+- **How it works:** Calculates the percentage of original lines written by the contributor that remain unmodified in the codebase after 6-12 months.
+- **The Value:** Proves your code was structurally sound and didn't require immediate rewriting.
 
-### Layer 4: Issue Resolution Velocity ⚡ (15% Weight)
-*Measures engineering responsiveness and critical bug fixes.*
-- **How it works:** Tracks how fast critical bugs are fixed, weighted by the issue's severity.
-- **The Value:** A P0 bug closed in 2 hours yields a massive score. A P3 feature request closed in 30 days yields a minimal score.
+### Layer 3: Issue Resolution Velocity  (20% Weight)
+*Measures engineering responsiveness and critical path execution.*
+- **How it works:** Tracks the time-to-close for critical path issues assigned to you, weighted by the repo's priority tier.
+- **The Value:** Rewards engineers who unblock the ecosystem rapidly.
 
-### Layer 5: Cross-Ecosystem Portability Index 🌐 (10% Weight)
-*Does your code transcend its original language?*
-- **How it works:** Detects if libraries are ported or heavily referenced across multiple package managers (npm, PyPI, Maven, crates.io).
-- **The Value:** If a JS library gets ported to Python and Rust, it proves fundamental, cross-ecosystem architectural value.
+### Layer 4: PR Review Depth  (15% Weight)
+*Measures the quality of peer-to-peer engineering collaboration.*
+- **How it works:** Tracks the number of review comments, requested changes, and cycles a PR went through. High-quality, deep reviews indicate high-complexity tasks.
+- **The Value:** Values the collaborative friction required to build consensus in distributed systems.
+
+### Layer 5: Cross-Repo Contribution Bonus  (10% Weight)
+*Rewards the ecosystem generalists.*
+- **How it works:** A multiplier applied if a contributor submits merged code to 3 or more distinct repositories within the same month (e.g., contributing to both `go-ipfs` and `rust-libp2p`).
+- **The Value:** Encourages knowledge sharing and reduces siloed development.
+
+### Layer 6: Temporal Decay Weighting  (5% Weight)
+*Favors recent, active maintenance over historical reputation.*
+- **How it works:** Recent work is weighted more heavily than work from previous quarters.
+- **The Value:** Keeps the funding flow focused on those actively pushing the frontier *today*.
 
 ---
 
-## 2. The Validity Gate: Proof-of-Build (Anti-Sybil)
+## 2. The Validity Gate: Proof-of-Build
 
-How do we stop people from creating thousands of fake GitHub accounts and pushing auto-generated code to inflate their scores?
+How do we prevent automated gaming of the system?
 
 **Proof-of-Build:** 
-No code is scored unless it comes with a **verified CI/CD execution trace** (e.g., GitHub Actions, Vercel build logs).
-- **How it works:** Our backend dynamically queries the GitHub Actions API to verify that a specific run ID physically compiled and executed with a `success` state.
-- **The Math:** `Final Score = MSTS × ProofOfBuild_multiplier`. If there is no verified trace, the multiplier is exactly `0`. 
-- **The Result:** Impossible to fake without actually burning compute and successfully compiling code.
+No code is scored unless it comes with a **verified CI/CD execution trace**.
+- **How it works:** Our backend queries the GitHub Actions / CircleCI API to verify that a specific run ID physically compiled and passed all integration tests with a `success` state.
+- **The Math:** `Final Score = MSTS × MergeVerification_gate`. If there is no verified, successful build trace associated with the merge, the score is exactly `0`. 
 
 ---
 
-## 3. The Distribution Engine: Dependency-Weighted Quadratic Funding (Anti-Whale)
+## 3. The Vision: Meritocratic Ecosystem Funding
 
-How do we stop "Whales" (rich actors or massive single entities) from hijacking the funding pools?
+Kinetic ensures that Protocol Labs capital is distributed according to **runtime reality**, not social popularity. 
 
-We use a modified version of **Quadratic Funding**:
-- **Standard Token Voting (Flawed):** 1 Whale with 100 tokens = 100 votes. 25 Community members with 4 tokens each = 100 votes. Total tie.
-- **Kinetic Quadratic Funding:** We take the *square root* of the contributor's assigned MSTS impact score.
-- **The Math:** 
-  - Whale calculation: $\sqrt{100} = 10$. Match weight = $10^2 = 100$.
-  - Community calculation: $25 \times \sqrt{4} = 50$. Match weight = $50^2 = 2500$.
-- **The Result:** The community open-source project receives **96%** of the funding pool, completely obliterating the Whale's influence.
+| Challenge | Old (Open Source) | Kinetic (Protocol Labs) |
+|-----------|-------------------|--------------------------|
+| **Impact Measurement** | Blast Radius (Downstream deps) | **Task Complexity Score** (Problem Hardness) |
+| **Ecosystem View** | Cross-ecosystem portability | **Repo Tier Weighting** |
+| **Collaboration** | Community quadratic voting | **PR Review Depth** (Engineering friction) |
+| **Growth Metric** | NPM downloads | **Cross-Repo Contribution Bonus** |
 
----
+**Welcome to Kinetic.** Powering the next generation of Protocol Labs contributors.
 
-## Technical Summary 
-
-| Challenge | Everyone Else Does | Kinetic Does |
-|-----------|-------------------|--------------|
-| **Measuring Impact** | GitHub stars, forks (highly gameable) | 5-Layer Triangulation (MSTS) |
-| **Sybil Prevention** | Account age, Captchas | **Proof-of-Build:** Verified CI/CD traces required |
-| **Fund Distribution** | Token voting (Whale Problem) | **Dependency-Weighted Quadratic Funding** |
-
-**Welcome to Kinetic.** Where *runtime reality* dictates your rewards, not social popularity.

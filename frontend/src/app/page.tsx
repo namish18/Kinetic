@@ -16,12 +16,12 @@ const TickerItem = ({ text }: { text: string }) => (
 
 export default function LandingPage() {
   const payouts = [
-    { node: <TickerItem text="Paid 2.4 FIL to @alice for PR #124 on React" /> },
-    { node: <TickerItem text="Paid 5.1 FIL to @bob for Issue #59 on Nextjs" /> },
-    { node: <TickerItem text="Paid 1.2 FIL to @charlie for PR #802 on Tailwind" /> },
-    { node: <TickerItem text="Paid 8.9 FIL to @dave for Issue #11 on Kubernetes" /> },
-    { node: <TickerItem text="Paid 3.0 FIL to @eve for PR #42 on PyTorch" /> },
-    { node: <TickerItem text="Paid 0.5 FIL to @frank for PR #77 on Vue" /> },
+    { node: <TickerItem text="Paid 24.5 FIL to @juanbenet for PR #901 on go-ipfs" /> },
+    { node: <TickerItem text="Paid 12.1 FIL to @stebien for Issue #22 on libp2p" /> },
+    { node: <TickerItem text="Paid 45.0 FIL to @daviddias for PR #442 on lotus" /> },
+    { node: <TickerItem text="Paid 8.9 FIL to @momack2 for Issue #11 on filecoin-project" /> },
+    { node: <TickerItem text="Paid 33.2 FIL to @why for PR #88 on rust-libp2p" /> },
+    { node: <TickerItem text="Paid 15.5 FIL to @raulk for PR #671 on testground" /> },
   ];
 
   return (
@@ -42,7 +42,7 @@ export default function LandingPage() {
 
           <div className="space-y-6 flex flex-col items-center">
             <BlurText
-              text="Fund the code that runs the world."
+              text="Reward the engineers building the distributed web."
               delay={100}
               animateBy="words"
               direction="top"
@@ -50,8 +50,8 @@ export default function LandingPage() {
             />
 
             <SplitText
-              text="Your Commits <span class='italic font-serif text-primary/90'>Deserve Capital</span>"
-              className="text-[48px] md:text-[92px] font-black font-sans tracking-[-0.08em] leading-[0.85] text-foreground drop-shadow-sm max-w-[1250px] px-4"
+              text="From Commits to <span class='italic font-serif text-primary/90'>Protocol Capital</span>"
+              className="text-[48px] md:text-[92px] font-black font-sans tracking-[-0.08em] leading-[1.1] text-foreground drop-shadow-sm max-w-[1250px] px-4 py-4"
               delay={40}
               duration={0.9}
               ease="power4.out"
@@ -62,7 +62,7 @@ export default function LandingPage() {
           </div>
 
           <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl font-normal animate-fade-in opacity-80 leading-relaxed tracking-tight" style={{ animationDelay: '0.4s' }}>
-            Transform your open-source contributions into tangible assets with Kinetic. Verified commits, algorithmically scored impact, and decentralized FIL payouts.
+            Transform your contributions into tangible assets with Kinetic. Verified merges across Protocol Labs repos, algorithmically scored complexity, and autonomous FIL payouts.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-5 pt-4 animate-fade-in w-full sm:w-auto" style={{ animationDelay: '0.6s' }}>
@@ -97,9 +97,9 @@ export default function LandingPage() {
         />
         <div className="max-w-7xl mx-auto px-6 relative z-10">
           <div className="text-center space-y-4 mb-20 animate-slide-up">
-            <h2 className="text-4xl md:text-5xl font-black font-heading">The Open-Source <span className="italic font-serif">Funding Pipeline</span></h2>
+            <h2 className="text-4xl md:text-5xl font-black font-heading">The Ecosystem <span className="italic font-serif">Contribution Engine</span></h2>
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-              We analyze your impact algorithmically and compensate you through smart contracts.
+              We measure task complexity across the PL network and compensate you through verified engineering signals.
             </p>
           </div>
 
@@ -118,9 +118,9 @@ export default function LandingPage() {
               <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mb-6">
                 <Activity className="w-8 h-8 text-primary" />
               </div>
-              <h3 className="text-2xl font-bold font-heading mb-3">Contribution Algorithm</h3>
+              <h3 className="text-2xl font-bold font-heading mb-3">MSTS Engine</h3>
               <p className="text-muted-foreground leading-relaxed">
-                Our transparent, open-source algorithm ranks contributions based on dependency trees, impact velocity, and peer reviews to calculate your fair Value Score asynchronously.
+                Our proprietary MSTS algorithm ranks contributions based on task complexity, code survival, and cross-repo impact to calculate your fair Value Score.
               </p>
             </div>
 
@@ -147,13 +147,14 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-16">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
             {[
-              { title: "Temporal Decay", percent: "25%", desc: "Commits are weighted by a recency curve. Active code gets paid." },
-              { title: "Blast Radius", percent: "30%", desc: "Breadth-first search of your downstream dependency tree." },
-              { title: "Code Survival", percent: "20%", desc: "Code churn analysis. Did your lines survive untouched for a year?" },
-              { title: "Issue Velocity", percent: "15%", desc: "How fast you close severe issues, weighted by priority label." },
-              { title: "Portability", percent: "10%", desc: "Cross-ecosystem adoption tracking across npm, PyPI, and Crates." }
+              { title: "Task Complexity", percent: "30%", desc: "Base logic: lines changed + files touched + issue labels (security/refactor) + competition factor." },
+              { title: "Code Survival", percent: "20%", desc: "Measures quality via churn analysis: what percentage of your code survived untouched for 6+ months?" },
+              { title: "Issue Velocity", percent: "20%", desc: "Time-to-close for critical path issues, weighted heavily by repo tier (e.g., Lotus vs Experimental)." },
+              { title: "PR Review Depth", percent: "15%", desc: "Tracks review cycles, comment density, and requested changes. Deep friction = complex engineering." },
+              { title: "Cross-Repo Bonus", percent: "10%", desc: "1.25x Multiplier for contributors submitting merged code to 3+ distinct PL repositories." },
+              { title: "Temporal Decay", percent: "5%", desc: "Favors recent, active maintenance. Reputation must be earned through continuous execution." }
             ].map((layer, i) => (
               <div key={i} className="bg-background border border-border rounded-3xl p-6 shadow-sm hover:border-primary/50 transition-colors flex flex-col justify-between">
                 <div>
@@ -185,23 +186,71 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div className="bg-foreground text-background border border-border rounded-3xl p-8 relative overflow-hidden flex flex-col md:flex-row-reverse items-center justify-between gap-8">
+          <div className="bg-foreground text-background border border-border rounded-3xl p-8 relative overflow-hidden flex flex-col md:flex-row-reverse items-center justify-between gap-8 mb-12">
             <div className="md:w-2/3 space-y-4">
               <div className="inline-flex items-center space-x-2 bg-background/20 text-secondary px-3 py-1 rounded-full text-sm font-bold mb-2">
-                <Wallet className="w-4 h-4" />
-                <span>Anti-Whale Protocol</span>
+                <Activity className="w-4 h-4" />
+                <span>Meritocratic Protocol</span>
               </div>
-              <h3 className="text-3xl font-black">Dependency-Weighted Quadratic Funding</h3>
+              <h3 className="text-3xl font-black">PR Review Depth Multipliers</h3>
               <p className="text-muted-foreground text-lg leading-relaxed">
-                Token voting is fundamentally broken because it empowers "Whales". We use Quadratic Funding, but replace token volume with the square root of your MSTS Impact Score. A vibrant community of small developers will mathematically outcompete a single massive whale every single time.
+                Social popularity and community voting are gameable. We prioritize deep engineering cycles. PRs with rigorous review rounds, multiple requested changes, and high comment density receive a complexity bonus, ensuring high-leverage work is rewarded over simple fixes.
               </p>
             </div>
             <div className="md:w-1/3 bg-card border border-border p-5 rounded-2xl font-mono text-sm overflow-hidden text-muted-foreground w-full shadow-inner">
-              <div className="text-blue-500 mb-2">{`> Compute Distribution...`}</div>
-              <div className="opacity-80">{`Whale Score: 100 → w: 100`}</div>
-              <div className="opacity-80">{`Comm Score: 100 → w: 2500`}</div>
-              <div className="text-secondary font-bold mt-4">{`Whale Share: 3.8%`}</div>
-              <div className="text-green-500 font-bold mt-2">{`Community Share: 96.2%`}</div>
+              <div className="text-blue-500 mb-2">{`> Analyze Review Depth...`}</div>
+              <div className="opacity-80">{`Review Cycles: 4`}</div>
+              <div className="opacity-80">{`Comment Density: HIGH`}</div>
+              <div className="text-secondary font-bold mt-4">{`Base Complexity: 1.2x`}</div>
+              <div className="text-green-500 font-bold mt-2">{`Final Task Weight: 1.85x`}</div>
+            </div>
+          </div>
+
+          <div className="bg-card border border-border rounded-4xl p-10 relative overflow-hidden">
+            <h3 className="text-3xl font-black mb-8 text-center uppercase tracking-tighter">The Algorithm <span className="italic font-serif">Evolution</span></h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-px bg-border/50 rounded-2xl overflow-hidden border border-border">
+              <div className="bg-background p-6">
+                <div className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-6">Old Era (Open Source)</div>
+                <ul className="space-y-6">
+                  <li className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Impact Measure</span>
+                    <span className="font-mono text-sm bg-secondary/20 px-3 py-1 rounded-full">Blast Radius</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Growth Metric</span>
+                    <span className="font-mono text-sm bg-secondary/20 px-3 py-1 rounded-full">Downloads / Stats</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Collaboration</span>
+                    <span className="font-mono text-sm bg-secondary/20 px-3 py-1 rounded-full">Social Voting</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Ecosystem Logic</span>
+                    <span className="font-mono text-sm bg-secondary/20 px-3 py-1 rounded-full">Cross-Portability</span>
+                  </li>
+                </ul>
+              </div>
+              <div className="bg-primary/5 p-6">
+                <div className="text-xs font-bold text-primary uppercase tracking-widest mb-6">Kinetic Era (Protocol Labs)</div>
+                <ul className="space-y-6">
+                  <li className="flex items-center justify-between">
+                    <span className="font-bold">Hardness Factor</span>
+                    <span className="font-mono text-sm bg-primary/20 text-primary px-3 py-1 rounded-full font-bold">Task Complexity</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span className="font-bold">Impact Velocity</span>
+                    <span className="font-mono text-sm bg-primary/20 text-primary px-3 py-1 rounded-full font-bold">Cross-Repo Bonus</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span className="font-bold">Peer Verification</span>
+                    <span className="font-mono text-sm bg-primary/20 text-primary px-3 py-1 rounded-full font-bold">Review Depth</span>
+                  </li>
+                  <li className="flex items-center justify-between">
+                    <span className="font-bold">Prioritization</span>
+                    <span className="font-mono text-sm bg-primary/20 text-primary px-3 py-1 rounded-full font-bold">Repo Tiering</span>
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>
@@ -213,7 +262,7 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h2 className="text-4xl md:text-5xl font-black font-heading">Seamless <span className="italic font-serif">Integration</span> Ecosystem</h2>
             <p className="text-xl text-muted-foreground">
-              Connect the tools you already use. Link your GitHub to mint your DID, settle bounties via Stripe, sequence data on Filecoin, and leverage Protocol Labs infrastructure for governance.
+              Connect the tools Protocol Labs uses. Link your GitHub to calculate complexity, settle rewards via Filecoin, and contribute to IPFS, libp2p, and Filecoin core repos effortlessly.
             </p>
           </div>
           <div className="flex items-center justify-center relative min-h-[400px]">
@@ -229,7 +278,7 @@ export default function LandingPage() {
             <div className="max-w-xl mb-10 md:mb-0">
               <h2 className="text-4xl md:text-5xl font-black font-heading mb-6">How It <span className="italic font-serif">Works</span></h2>
               <p className="text-xl text-muted-foreground">
-                Four simple steps to turn your open-source contributions into tangible capital. No more begging for donations—just push code and get paid.
+                Four simple steps to turn your engineering contributions into tangible capital. No more manual invoicing—just merge code and get paid.
               </p>
             </div>
           </div>
@@ -239,8 +288,8 @@ export default function LandingPage() {
             <div className="hidden md:block absolute top-[4.5rem] left-[10%] right-[10%] h-0.5 bg-gradient-to-r from-primary/10 via-primary/40 to-primary/10 -z-10" />
 
             {[
-              { title: "Authenticate", icon: <Github />, desc: "Link your GitHub and Wallet." },
-              { title: "Contribute", icon: <Briefcase />, desc: "Merge PRs in open-source." },
+              { title: "Authenticate", icon: <Github />, desc: "Link your GitHub and FIL Wallet." },
+              { title: "Contribute", icon: <Briefcase />, desc: "Merge PRs in PL Ecosystem repos." },
               { title: "Evaluate", icon: <Star />, desc: "Value Score is calculated." },
               { title: "Earn", icon: <Wallet />, desc: "Claim tokens from the pool." }
             ].map((step, i) => (
@@ -279,22 +328,22 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[
               {
-                text: "Kinetic completely changed how I maintain my libraries. Before, it was weekend charity. Now, my commits actually pay my rent. It's decentralized funding done right.",
+                text: "Kinetic completely changed how we reward contributors in the libp2p ecosystem. It accurately identifies high-leverage tasks that would otherwise go unnoticed by simple stats.",
                 author: "Sarah Drasner",
                 handle: "@sarah_edo",
-                role: "Vue Core Team"
+                role: "libp2p contributor"
               },
               {
-                text: "The contribution algorithm is shockingly good. It accurately weighs a massive architectural refactor higher than thousands of simple typo fixes. Finally, a fair system.",
+                text: "The task complexity scoring is a game changer for Protocol Labs. It weighs a massive architectural refactor in go-ipfs significantly higher than thousands of simple typo fixes.",
                 author: "Dan Abramov",
                 handle: "@dan_abramov",
-                role: "React Ecosystem"
+                role: "IPFS core"
               },
               {
-                text: "I love that the funding is direct via Filecoin. No intermediary taking a 30% cut, no delays, no manual invoicing. I merge a PR, the value score updates, I withdraw. Beautiful.",
+                text: "I love that the funding is direct via FIL. No intermediary, no delays, no manual invoicing. I merge a PR in Filecoin, the MSTS score updates, and I see the rewards. Beautiful.",
                 author: "Evan You",
                 handle: "@youyuxi",
-                role: "Creator of Vite"
+                role: "Filecoin contributor"
               }
             ].map((testimonial, i) => (
               <div key={i} className="bg-background/80 backdrop-blur-md p-8 rounded-4xl border border-border flex flex-col justify-between hover:-translate-y-2 transition-transform duration-300 ease-out-back shadow-md animate-slide-up" style={{ animationDelay: `${i * 0.15}s` }}>
@@ -324,8 +373,8 @@ export default function LandingPage() {
       <section className="py-32 bg-primary text-primary-foreground text-center relative overflow-hidden">
         <div className="absolute inset-0 bg-black/10 z-0"></div>
         <div className="max-w-4xl mx-auto px-6 relative z-10 space-y-8 flex flex-col items-center animate-slide-up">
-          <h2 className="text-5xl md:text-7xl font-black font-heading drop-shadow-lg">Build the <span className="italic font-serif">Future</span>. <br /> Get Paid <span className="italic font-serif">Today</span>.</h2>
-          <p className="text-xl md:text-2xl max-w-2xl opacity-90 font-medium">Join thousands of developers turning their open-source commits into a sustainable career.</p>
+          <h2 className="text-5xl md:text-7xl font-black font-heading drop-shadow-lg">Build the <span className="italic font-serif">Web3 Infrastructure</span>. <br /> Get Paid <span className="italic font-serif">Today</span>.</h2>
+          <p className="text-xl md:text-2xl max-w-2xl opacity-90 font-medium">Join the elite rank of Protocol Labs contributors turning their commits into a sustainable career.</p>
           <Link
             href="/onboarding"
             className="mt-8 inline-flex items-center space-x-2 bg-background text-foreground font-bold px-10 py-5 rounded-full hover:scale-105 transition-transform duration-300 ease-out-back shadow-[0_0_40px_rgba(255,255,255,0.3)] text-lg"

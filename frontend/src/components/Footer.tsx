@@ -98,7 +98,7 @@ export const Footer = ({
                                     target="_blank"
                                     className="text-base text-muted-foreground hover:text-foreground transition-colors duration-300 hover:font-medium"
                                 >
-                                    Crafted by {creatorName}
+                                    Crafted by Yantram.dev
                                 </Link>
                             </nav>
                         )}
