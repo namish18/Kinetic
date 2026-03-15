@@ -1,9 +1,9 @@
 "use client"
 import React, { useEffect, useState, memo } from 'react';
-import { Github, Fingerprint, Hexagon, Atom, Coins, Globe } from 'lucide-react';
+import { Github, Fingerprint, Hexagon, Atom } from 'lucide-react';
 
 // --- Type Definitions ---
-type IconType = 'github' | 'stripe' | 'filecoin' | 'protocol' | 'did';
+type IconType = 'github' | 'stripe' | 'filecoin' | 'flow' | 'did';
 
 type GlowColor = 'cyan' | 'purple' | 'blue';
 
@@ -43,7 +43,7 @@ const iconComponents: Record<IconType, { component: () => React.JSX.Element; col
     },
     stripe: {
         component: () => (
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-full h-full text-[#635BFF]">
+            <svg viewBox="0 0 24 24" fill="currentColor" style={{ transform: "scaleX(-1)" }} className="w-full h-full text-[#635BFF]">
                 <path d="M13.962 8.351c0-1.157-.932-1.579-2.518-1.579-1.396 0-3.078.434-3.078.434l-.32-2.395s1.77-.527 3.65-.527c3.153 0 5.164 1.54 5.164 4.39 0 4.14-5.69 4.354-5.69 6.273 0 .725.61 1.119 1.583 1.119 1.488 0 3.29-.554 3.29-.554l.32 2.45s-1.487.646-3.804.646c-3.153 0-4.305-1.542-4.305-4.22 0-3.957 5.708-4.218 5.708-6.077z" />
             </svg>
         ),
@@ -51,19 +51,19 @@ const iconComponents: Record<IconType, { component: () => React.JSX.Element; col
     },
     filecoin: {
         component: () => (
-            <div className="w-full h-full flex items-center justify-center bg-[#0090FF] rounded-xl p-1">
-                <Coins className="w-full h-full text-white" />
+            <div className="w-full h-full flex items-center justify-center rounded-xl overflow-hidden p-[2px]">
+                <img src="https://auth.devspot.app/storage/v1/object/public/hackathon-images/sponsors/Filecoin%20Foundation/513386ec-c9c1-4477-a405-e22948e66a06.svg" alt="Filecoin" className="w-full h-full object-contain" />
             </div>
         ),
         color: '#0090FF'
     },
-    protocol: {
+    flow: {
         component: () => (
-            <div className="w-full h-full flex items-center justify-center bg-foreground rounded-xl p-1">
-                <Globe className="w-full h-full text-background" />
+            <div className="w-full h-full flex items-center justify-center rounded-xl overflow-hidden p-[2px]">
+                <img src="https://auth.devspot.app/storage/v1/object/public/hackathon-images/sponsors/Flow/3045fff0-2153-41d8-b5f6-9adb15476acb.svg" alt="Flow" className="w-full h-full object-contain" />
             </div>
         ),
-        color: '#00D1FF'
+        color: '#00EF8B'
     },
     did: {
         component: () => (
@@ -123,14 +123,14 @@ const skillsConfig: SkillConfig[] = [
         label: 'Filecoin'
     },
     {
-        id: 'protocol',
+        id: 'flow',
         orbitRadius: 190,
         size: 50,
         speed: -0.4,
-        iconType: 'protocol',
+        iconType: 'flow',
         phaseShift: Math.PI,
-        glowColor: 'blue',
-        label: 'Protocol Labs'
+        glowColor: 'cyan',
+        label: 'Flow'
     }
 ];
 
