@@ -1,9 +1,16 @@
-import React from "react";
+"use client";
+import React, { useState } from "react";
 import Link from "next/link";
-import { Github, Fingerprint, ArrowRight } from "lucide-react";
+import { Github, Fingerprint, ArrowRight, Building, User } from "lucide-react";
 import DotGrid from "@/components/DotGrid";
 
 export default function LoginPage() {
+    const [role, setRole] = useState<'contributor' | 'organization'>('contributor');
+    
+    const handleGithubLogin = () => {
+        window.location.href = `http://localhost:5000/api/auth/github?role=${role}`;
+    };
+
     return (
         <div className="grid place-items-center min-h-screen w-full relative bg-background overflow-hidden p-6">
             <DotGrid
@@ -23,8 +30,23 @@ export default function LoginPage() {
                     <p className="text-muted-foreground text-center font-medium">Continue your open-source journey.</p>
                 </div>
 
+                <div className="flex items-center p-1 bg-muted/50 rounded-xl mb-6">
+                    <button 
+                        onClick={() => setRole('contributor')}
+                        className={`flex-1 py-2 px-3 flex items-center justify-center gap-2 rounded-lg text-sm font-bold transition-all ${role === 'contributor' ? 'bg-background shadow font-black text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    >
+                        <User className="w-4 h-4" /> Contributor
+                    </button>
+                    <button 
+                        onClick={() => setRole('organization')}
+                        className={`flex-1 py-2 px-3 flex items-center justify-center gap-2 rounded-lg text-sm font-bold transition-all ${role === 'organization' ? 'bg-background shadow font-black text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    >
+                        <Building className="w-4 h-4" /> Organization
+                    </button>
+                </div>
+
                 <div className="space-y-4">
-                    <button className="w-full relative group overflow-hidden rounded-xl border border-border bg-background p-4 flex items-center justify-center space-x-3 hover:border-primary/50 transition-colors">
+                    <button onClick={handleGithubLogin} className="w-full relative group overflow-hidden rounded-xl border border-border bg-background p-4 flex items-center justify-center space-x-3 hover:border-primary/50 transition-colors">
                         <div className="absolute inset-0 w-[200%] h-full bg-gradient-to-r from-transparent via-primary/5 to-transparent -translate-x-[100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
                         <Github className="w-5 h-5 text-foreground" />
                         <span className="font-semibold text-foreground">Sign in with GitHub</span>

@@ -13,8 +13,12 @@ const router = express.Router();
 /**
  * GET /api/auth/github
  * Kick off the GitHub OAuth dance
+ * Accepts ?role=contributor (default) or ?role=organization
  */
-router.get('/github', passport.authenticate('github', { scope: ['user:email'] }));
+router.get('/github', (req, res, next) => {
+    req.session.role = req.query.role || 'contributor';
+    next();
+}, passport.authenticate('github', { scope: ['user:email'] }));
 
 /**
  * GET /api/auth/github/callback
@@ -24,15 +28,22 @@ router.get('/github', passport.authenticate('github', { scope: ['user:email'] })
 router.get(
     '/github/callback',
     passport.authenticate('github', { failureRedirect: '/?error=auth_failed' }),
-    (req, res) => {
+    async (req, res) => {
+        // Update the user's role if it was set in the session (e.g., during signup)
+        if (req.session.role && req.user.role !== req.session.role) {
+            req.user.role = req.session.role;
+            await req.user.save();
+        }
+
         const token = jwt.sign(
-            { id: req.user._id, github: req.user.github, did: req.user.did },
+            { id: req.user._id, github: req.user.github, did: req.user.did, role: req.user.role },
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
 
-        const frontendURL = process.env.FRONTEND_URL || 'http://localhost:5000';
-        res.redirect(`${frontendURL}/dashboard?token=${token}`);
+        const frontendURL = process.env.FRONTEND_URL || 'http://localhost:3000';
+        const redirectPath = req.user.role === 'organization' ? '/org-dashboard' : '/dashboard';
+        res.redirect(`${frontendURL}${redirectPath}?token=${token}`);
     }
 );
 
@@ -60,6 +71,9 @@ router.get('/me', authenticateToken, async (req, res) => {
                 did: user.did,
                 ipfsCID: user.ipfsCID,
                 wallet: user.wallet,
+                role: user.role,
+                repositories: user.repositories,
+                weights: user.weights,
                 didDocument: user.didDocument,
                 createdAt: user.createdAt,
             },

@@ -63,6 +63,68 @@ const StatusBadge = ({ status }: { status: TxStatus }) => {
 
 export default function OrgDashboardPage() {
     const [signatures, setSignatures] = useState([true, true, false]);
+    const [token, setToken] = useState("");
+    const [repos, setRepos] = useState<string[]>([]);
+    const [weights, setWeights] = useState({
+        impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2
+    });
+    const [newRepo, setNewRepo] = useState("");
+
+    React.useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        let t = urlParams.get("token") || localStorage.getItem("token") || "";
+        if (t) {
+            setToken(t);
+            localStorage.setItem("token", t);
+            
+            fetch("http://localhost:5000/api/org/info", {
+                headers: { "Authorization": `Bearer ${t}` }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    setRepos(data.repositories || []);
+                    if (data.weights) setWeights(data.weights);
+                }
+            })
+            .catch(console.error);
+        }
+    }, []);
+
+    const addRepo = async () => {
+        if (!newRepo) return;
+        try {
+            const res = await fetch("http://localhost:5000/api/org/repositories", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                body: JSON.stringify({ repository: newRepo })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setRepos(data.repositories);
+                setNewRepo("");
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const updateWeights = async () => {
+        try {
+            const res = await fetch("http://localhost:5000/api/org/weights", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                body: JSON.stringify(weights)
+            });
+            const data = await res.json();
+            if (data.success) {
+                setWeights(data.weights);
+                alert("Weights updated successfully!");
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    };
 
     return (
         <div className="min-h-screen pt-28 pb-16 px-4 md:px-8 max-w-[1600px] mx-auto w-full font-sans">
@@ -142,8 +204,65 @@ export default function OrgDashboardPage() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Left Column: Payout Management */}
+                {/* Left Column: Payout Management & Config */}
                 <div className="lg:col-span-2 space-y-8">
+                    
+                    {/* Repository & Algorithm Configuration */}
+                    <div className="bg-card border border-border rounded-3xl p-6 shadow-sm">
+                        <div className="flex items-center gap-2 mb-6">
+                            <Activity className="w-5 h-5 text-primary" />
+                            <h2 className="text-xl font-bold font-heading">Org Configuration</h2>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                            {/* Repositories */}
+                            <div>
+                                <h3 className="text-md font-bold text-foreground mb-3 uppercase tracking-widest text-xs">Tracked Repositories</h3>
+                                <div className="space-y-3 mb-4">
+                                    {repos.map(r => (
+                                        <div key={r} className="p-3 bg-muted/30 border border-border rounded-xl flex items-center justify-between">
+                                            <span className="text-sm font-medium font-mono text-muted-foreground">{r}</span>
+                                        </div>
+                                    ))}
+                                    {repos.length === 0 && (
+                                        <p className="text-sm text-muted-foreground italic">No tracked repositories yet.</p>
+                                    )}
+                                </div>
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="text" 
+                                        value={newRepo} 
+                                        onChange={e => setNewRepo(e.target.value)} 
+                                        placeholder="owner/repo" 
+                                        className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:border-primary/50"
+                                    />
+                                    <button onClick={addRepo} className="bg-foreground text-background font-bold px-4 rounded-xl text-sm hover:opacity-90 transition-opacity">Add</button>
+                                </div>
+                            </div>
+                            
+                            {/* Algorithm Weights */}
+                            <div>
+                                <h3 className="text-md font-bold text-foreground mb-3 uppercase tracking-widest text-xs">Algorithm Weights</h3>
+                                <div className="space-y-3">
+                                    {Object.entries(weights).map(([k, v]) => (
+                                        <div key={k} className="flex items-center justify-between gap-4">
+                                            <label className="text-sm font-bold text-muted-foreground capitalize w-24">{k}</label>
+                                            <input 
+                                                type="number" 
+                                                step="0.05"
+                                                min="0"
+                                                max="1"
+                                                value={v}
+                                                onChange={e => setWeights({...weights, [k]: parseFloat(e.target.value)})}
+                                                className="w-24 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary/50"
+                                            />
+                                        </div>
+                                    ))}
+                                    <button onClick={updateWeights} className="w-full mt-2 bg-primary text-primary-foreground font-bold py-2 rounded-xl text-sm hover:opacity-90 transition-opacity shadow-glow-sm">Save Weights</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                     {/* Payout Table Preview */}
                     <div className="bg-card border border-border rounded-3xl overflow-hidden shadow-sm">
                         <div className="p-6 border-b border-border flex items-center justify-between">

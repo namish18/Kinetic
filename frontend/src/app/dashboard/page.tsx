@@ -57,6 +57,35 @@ export default function ContributorDashboardPage() {
   const currentCycle = 5;
   const currentWeek = 4;
 
+  const [token, setToken] = useState("");
+  const [scoreInfo, setScoreInfo] = useState<{
+      finalScore?: number;
+      payout?: number;
+  } | null>(null);
+
+  React.useEffect(() => {
+      const urlParams = new URLSearchParams(window.location.search);
+      let t = urlParams.get("token") || localStorage.getItem("token") || "";
+      if (t) {
+          setToken(t);
+          localStorage.setItem("token", t);
+          
+          fetch("http://localhost:5000/api/contribution/me?proofOfBuild=false", {
+              headers: { "Authorization": `Bearer ${t}` }
+          })
+          .then(res => res.json())
+          .then(data => {
+              if (data.success && data.finalScore !== undefined) {
+                  setScoreInfo({
+                      finalScore: data.finalScore,
+                      payout: Math.round(data.finalScore * 5)
+                  });
+              }
+          })
+          .catch(console.error);
+      }
+  }, []);
+
   return (
     <div className="min-h-screen pt-28 pb-16 px-4 md:px-8 max-w-[1440px] mx-auto w-full font-sans">
       {/* Header */}
@@ -92,7 +121,7 @@ export default function ContributorDashboardPage() {
               <BarChart3 className="w-5 h-5" />
             </div>
           </div>
-          <div className="text-4xl font-black font-mono">92/100</div>
+          <div className="text-4xl font-black font-mono">{scoreInfo ? (Math.round(scoreInfo.finalScore! * 10) / 10) : "92"}/100</div>
           <p className="text-xs text-muted-foreground mt-2 font-medium">Top 2% of ecosystem contributors</p>
         </div>
 
@@ -103,7 +132,7 @@ export default function ContributorDashboardPage() {
               <IconFlow />
             </div>
           </div>
-          <div className="text-4xl font-black font-mono">450 FLOW</div>
+          <div className="text-4xl font-black font-mono">{scoreInfo ? scoreInfo.payout : 450} FLOW</div>
           <div className="flex items-center gap-1.5 text-xs text-emerald-500 font-bold mt-2">
             <ArrowUpRight className="w-3 h-3" />
             +$3,105.00 USD
@@ -253,7 +282,7 @@ export default function ContributorDashboardPage() {
               <div>
                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-2">Cycle Pending</span>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black font-mono">450.00</span>
+                  <span className="text-3xl font-black font-mono">{scoreInfo ? scoreInfo.payout : "450.00"}</span>
                   <span className="text-sm font-bold text-muted-foreground">FLOW</span>
                 </div>
               </div>
