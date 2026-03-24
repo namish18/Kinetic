@@ -7,12 +7,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import {
-    computeMSTS,
-    computeTemporalDecay,
-    computeBlastRadius,
-    computeCodeSurvival,
-    computeIssueVelocity,
-    computePortabilityIndex,
+    computeMSTS
 } from '../services/contributionService.js';
 
 const router = express.Router();
@@ -75,80 +70,6 @@ router.get('/me', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('❌ MSTS computation failed:', error.message);
         res.status(500).json({ error: 'Score computation failed', message: error.message });
-    }
-});
-
-// ─────────────────────────────────────────────────────────────
-//  Individual Layer Endpoints (for granular debugging/display)
-// ─────────────────────────────────────────────────────────────
-
-/**
- * GET /api/contribution/layer/temporal/:username
- * Compute only the Temporal Decay score for a user.
- */
-router.get('/layer/temporal/:username', async (req, res) => {
-    try {
-        const token = req.query.token || process.env.GITHUB_PAT || null;
-        const result = await computeTemporalDecay(req.params.username, token);
-        res.json({ success: true, layer: 'temporalDecay', ...result });
-    } catch (error) {
-        res.status(500).json({ error: 'Layer computation failed', message: error.message });
-    }
-});
-
-/**
- * GET /api/contribution/layer/blast/:username
- * Compute only the Blast Radius score for a user.
- */
-router.get('/layer/blast/:username', async (req, res) => {
-    try {
-        const token = req.query.token || process.env.GITHUB_PAT || null;
-        const result = await computeBlastRadius(req.params.username, token);
-        res.json({ success: true, layer: 'blastRadius', ...result });
-    } catch (error) {
-        res.status(500).json({ error: 'Layer computation failed', message: error.message });
-    }
-});
-
-/**
- * GET /api/contribution/layer/survival/:username
- * Compute only the Code Survival Rate for a user.
- */
-router.get('/layer/survival/:username', async (req, res) => {
-    try {
-        const token = req.query.token || process.env.GITHUB_PAT || null;
-        const result = await computeCodeSurvival(req.params.username, token);
-        res.json({ success: true, layer: 'codeSurvival', ...result });
-    } catch (error) {
-        res.status(500).json({ error: 'Layer computation failed', message: error.message });
-    }
-});
-
-/**
- * GET /api/contribution/layer/velocity/:username
- * Compute only the Issue Resolution Velocity for a user.
- */
-router.get('/layer/velocity/:username', async (req, res) => {
-    try {
-        const token = req.query.token || process.env.GITHUB_PAT || null;
-        const result = await computeIssueVelocity(req.params.username, token);
-        res.json({ success: true, layer: 'issueVelocity', ...result });
-    } catch (error) {
-        res.status(500).json({ error: 'Layer computation failed', message: error.message });
-    }
-});
-
-/**
- * GET /api/contribution/layer/portability/:username
- * Compute only the Cross-Ecosystem Portability Index for a user.
- */
-router.get('/layer/portability/:username', async (req, res) => {
-    try {
-        const token = req.query.token || process.env.GITHUB_PAT || null;
-        const result = await computePortabilityIndex(req.params.username, token);
-        res.json({ success: true, layer: 'portability', ...result });
-    } catch (error) {
-        res.status(500).json({ error: 'Layer computation failed', message: error.message });
     }
 });
 

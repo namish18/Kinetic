@@ -1,6 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
-import { computeMSTS } from '../services/contributionService.js';
+import { extractPRMetrics, calculatePRScore } from '../services/contributionService.js';
 
 const router = express.Router();
 
@@ -53,17 +53,20 @@ router.post('/github', async (req, res) => {
             // Use the repository-specific weights passed down to MSTS or related logic
             const { impact, complexity, quality, review, priority } = repoConfig.weights;
 
-            // In a real scenario, you'd pass these custom weights to the algorithm. 
-            // We simulate it here by logging them and executing MSTS.
-            console.log(`Webhook: Using custom weights - Impact: ${impact}, Complexity: ${complexity}, Quality: ${quality}, Review: ${review}, Priority: ${priority}`);
-
-            const githubToken = process.env.GITHUB_PAT || null;
-            const result = await computeMSTS(contributorUsername, githubToken, { proofOfBuild: false });
-
-            const finalScore = result.finalScore || 0;
+            // Calculate payout based on true PR dimensions instead of arbitrary lookup
+            const prMetrics = extractPRMetrics(payload.pull_request);
             
-            // Example payout logic: BOUNTY_POOL * (finalScore / 100) or however you wish to map score -> payout
-            const estPayoutFlow = (finalScore * 5); // arbitrarily scaling for illustration
+            // Execute the explicit algorithm from the contribution_algo.md
+            const result = calculatePRScore(prMetrics, repoConfig.weights, { 
+                reputation: 100, // example user context
+                daoScore: 0.6    // example DAO upvotes
+            });
+
+            // Normalizing score for output / payout (base score mapped to a 0-100 range loosely)
+            const finalScore = result.score ? Math.round(result.score * 100) : 0;
+            
+            // Example payout logic: mapping final 0-100 score to FLOW amount
+            const estPayoutFlow = (finalScore * 5); 
             
             console.log(`Webhook: Payout calculated for ${contributorUsername} -> Score: ${finalScore}, Est payout: ${estPayoutFlow} FLOW\n`);
 
