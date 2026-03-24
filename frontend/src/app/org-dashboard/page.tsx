@@ -61,14 +61,27 @@ const StatusBadge = ({ status }: { status: TxStatus }) => {
     );
 };
 
+interface RepoConfig {
+    name: string;
+    targetBranches: string[];
+    weights: {
+        impact: number;
+        complexity: number;
+        quality: number;
+        review: number;
+        priority: number;
+    };
+}
+
 export default function OrgDashboardPage() {
     const [signatures, setSignatures] = useState([true, true, false]);
     const [token, setToken] = useState("");
-    const [repos, setRepos] = useState<string[]>([]);
-    const [weights, setWeights] = useState({
-        impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2
-    });
+    const [repos, setRepos] = useState<RepoConfig[]>([]);
     const [newRepo, setNewRepo] = useState("");
+
+    // Temporary UI state for editing
+    const [editBranches, setEditBranches] = useState<Record<string, string>>({});
+    const [editWeights, setEditWeights] = useState<Record<string, any>>({});
 
     React.useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -84,7 +97,6 @@ export default function OrgDashboardPage() {
             .then(data => {
                 if (data.success) {
                     setRepos(data.repositories || []);
-                    if (data.weights) setWeights(data.weights);
                 }
             })
             .catch(console.error);
@@ -109,16 +121,36 @@ export default function OrgDashboardPage() {
         }
     };
 
-    const updateWeights = async () => {
+    const updateTargetBranches = async (repoName: string) => {
         try {
-            const res = await fetch("http://localhost:5000/api/org/weights", {
+            const branchesString = editBranches[repoName] ?? "";
+            const branchesArray = branchesString.split(",").map(b => b.trim()).filter(Boolean);
+            const res = await fetch(`http://localhost:5000/api/org/repositories/${encodeURIComponent(repoName)}/branches`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-                body: JSON.stringify(weights)
+                body: JSON.stringify({ targetBranches: branchesArray })
             });
             const data = await res.json();
             if (data.success) {
-                setWeights(data.weights);
+                setRepos(data.repositories);
+                alert("Target branches updated!");
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    };
+
+    const updateRepoWeights = async (repoName: string, defaults: any) => {
+        try {
+            const weightsToSave = editWeights[repoName] || defaults;
+            const res = await fetch(`http://localhost:5000/api/org/repositories/${encodeURIComponent(repoName)}/weights`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                body: JSON.stringify(weightsToSave)
+            });
+            const data = await res.json();
+            if (data.success) {
+                setRepos(data.repositories);
                 alert("Weights updated successfully!");
             }
         } catch (e) {
@@ -214,53 +246,74 @@ export default function OrgDashboardPage() {
                             <h2 className="text-xl font-bold font-heading">Org Configuration</h2>
                         </div>
                         
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            {/* Repositories */}
-                            <div>
-                                <h3 className="text-md font-bold text-foreground mb-3 uppercase tracking-widest text-xs">Tracked Repositories</h3>
-                                <div className="space-y-3 mb-4">
-                                    {repos.map(r => (
-                                        <div key={r} className="p-3 bg-muted/30 border border-border rounded-xl flex items-center justify-between">
-                                            <span className="text-sm font-medium font-mono text-muted-foreground">{r}</span>
-                                        </div>
-                                    ))}
-                                    {repos.length === 0 && (
-                                        <p className="text-sm text-muted-foreground italic">No tracked repositories yet.</p>
-                                    )}
-                                </div>
-                                <div className="flex gap-2">
-                                    <input 
-                                        type="text" 
-                                        value={newRepo} 
-                                        onChange={e => setNewRepo(e.target.value)} 
-                                        placeholder="owner/repo" 
-                                        className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:border-primary/50"
-                                    />
-                                    <button onClick={addRepo} className="bg-foreground text-background font-bold px-4 rounded-xl text-sm hover:opacity-90 transition-opacity">Add</button>
-                                </div>
+                        <div className="space-y-6">
+                            <div className="flex gap-2 mb-4">
+                                <input 
+                                    type="text" 
+                                    value={newRepo} 
+                                    onChange={e => setNewRepo(e.target.value)} 
+                                    placeholder="Add new repository (e.g. owner/repo)" 
+                                    className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm font-mono text-foreground focus:outline-none focus:border-primary/50"
+                                />
+                                <button onClick={addRepo} className="bg-foreground text-background font-bold px-6 rounded-xl text-sm hover:opacity-90 transition-opacity">Add Repo</button>
                             </div>
-                            
-                            {/* Algorithm Weights */}
-                            <div>
-                                <h3 className="text-md font-bold text-foreground mb-3 uppercase tracking-widest text-xs">Algorithm Weights</h3>
-                                <div className="space-y-3">
-                                    {Object.entries(weights).map(([k, v]) => (
-                                        <div key={k} className="flex items-center justify-between gap-4">
-                                            <label className="text-sm font-bold text-muted-foreground capitalize w-24">{k}</label>
-                                            <input 
-                                                type="number" 
-                                                step="0.05"
-                                                min="0"
-                                                max="1"
-                                                value={v}
-                                                onChange={e => setWeights({...weights, [k]: parseFloat(e.target.value)})}
-                                                className="w-24 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary/50"
-                                            />
+
+                            {repos.length === 0 && (
+                                <p className="text-sm text-muted-foreground italic">No tracked repositories yet.</p>
+                            )}
+
+                            {repos.map(r => {
+                                const currentWeights = editWeights[r.name] || r.weights;
+                                const branchesStr = editBranches[r.name] !== undefined ? editBranches[r.name] : r.targetBranches.join(", ");
+                                return (
+                                <div key={r.name} className="p-5 bg-muted/10 border border-border rounded-2xl flex flex-col gap-4">
+                                    <div className="flex items-center justify-between border-b border-border pb-3">
+                                        <span className="text-lg font-bold font-mono text-foreground">{r.name}</span>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        {/* Target Branches config */}
+                                        <div>
+                                            <h3 className="text-xs font-bold text-muted-foreground mb-2 uppercase tracking-widest">Target Branches (Comma-separated)</h3>
+                                            <div className="flex gap-2">
+                                                <input 
+                                                    type="text" 
+                                                    value={branchesStr}
+                                                    onChange={e => setEditBranches(prev => ({...prev, [r.name]: e.target.value}))}
+                                                    placeholder="main, master"
+                                                    className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary/50"
+                                                />
+                                                <button onClick={() => updateTargetBranches(r.name)} className="bg-primary/20 text-primary font-bold px-3 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Set</button>
+                                            </div>
                                         </div>
-                                    ))}
-                                    <button onClick={updateWeights} className="w-full mt-2 bg-primary text-primary-foreground font-bold py-2 rounded-xl text-sm hover:opacity-90 transition-opacity shadow-glow-sm">Save Weights</button>
+
+                                        {/* Weights config */}
+                                        <div>
+                                            <h3 className="text-xs font-bold text-muted-foreground mb-2 uppercase tracking-widest">Algorithm Weights</h3>
+                                            <div className="grid grid-cols-2 gap-2 mb-3">
+                                                {Object.entries(currentWeights).map(([k, v]) => (
+                                                    <div key={k} className="flex items-center justify-between gap-2 p-2 bg-background border border-border rounded-xl">
+                                                        <label className="text-[10px] font-bold text-muted-foreground capitalize">{k}</label>
+                                                        <input 
+                                                            type="number" 
+                                                            step="0.05"
+                                                            min="0"
+                                                            max="1"
+                                                            value={v as number}
+                                                            onChange={e => setEditWeights(prev => ({
+                                                                ...prev,
+                                                                [r.name]: { ...currentWeights, [k]: parseFloat(e.target.value) }
+                                                            }))}
+                                                            className="w-16 bg-transparent text-right text-xs font-mono font-bold focus:outline-none focus:text-primary"
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <button onClick={() => updateRepoWeights(r.name, r.weights)} className="w-full bg-primary/20 text-primary font-bold py-2 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Save Weights</button>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            )})}
                         </div>
                     </div>
                     {/* Payout Table Preview */}

@@ -23,14 +23,19 @@ const userSchema = new mongoose.Schema({
 
     // Role and Organization-specific data
     role: { type: String, enum: ['contributor', 'organization'], default: 'contributor' },
-    repositories: [{ type: String }],
-    weights: {
-        impact: { type: Number, default: 0.2 },
-        complexity: { type: Number, default: 0.2 },
-        quality: { type: Number, default: 0.2 },
-        review: { type: Number, default: 0.2 },
-        priority: { type: Number, default: 0.2 }
-    },
+    
+    // Repositories are now objects with specific configurations
+    repositories: [{
+        name: { type: String, required: true },
+        targetBranches: [{ type: String }],
+        weights: {
+            impact: { type: Number, default: 0.2 },
+            complexity: { type: Number, default: 0.2 },
+            quality: { type: Number, default: 0.2 },
+            review: { type: Number, default: 0.2 },
+            priority: { type: Number, default: 0.2 }
+        }
+    }],
 
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
