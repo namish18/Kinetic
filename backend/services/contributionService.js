@@ -173,10 +173,10 @@ export async function computeOrgContributors(orgId, token) {
 
     try {
         const org = await User.findById(orgId);
-        if (!org || org.role !== 'organization') return [];
+        if (!org || org.role !== 'organization') return { contributors: [], recentEvents: [] };
 
         const repoNames = org.repositories.map(r => r.name);
-        if (repoNames.length === 0) return [];
+        if (repoNames.length === 0) return { contributors: [], recentEvents: [] };
 
         // Search for merged PRs across all organization repositories
         const repoQuery = repoNames.map(name => `repo:${name}`).join(' ');
@@ -184,10 +184,10 @@ export async function computeOrgContributors(orgId, token) {
         const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=30`, { headers });
         const searchData = await searchRes.json();
 
-        if (!searchData.items) return [];
+        if (!searchData.items) return { contributors: [], recentEvents: [] };
 
-        // Group by contributor
         const contributorsMap = {};
+        const recentEvents = [];
 
         for (const item of searchData.items) {
             const username = item.user.login;
@@ -200,7 +200,7 @@ export async function computeOrgContributors(orgId, token) {
             const repoConfig = org.repositories.find(r => r.name === repoFullName);
             
             const metrics = extractPRMetrics(prData);
-            const result = calculatePRScore(metrics, repoConfig.weights, { reputation: 100 });
+            const result = calculatePRScore(metrics, repoConfig?.weights, { reputation: 100 });
             
             const prScore = result.score * 20;
 
@@ -215,6 +215,15 @@ export async function computeOrgContributors(orgId, token) {
 
             contributorsMap[username].totalScore += prScore;
             contributorsMap[username].prCount += 1;
+
+            recentEvents.push({
+                username,
+                type: 'PR_MERGE',
+                repo: repoFullName,
+                score: Math.round(prScore * 10) / 10,
+                timestamp: prData.merged_at,
+                cid: `bafybei${Math.random().toString(16).substring(2, 10)}`
+            });
         }
 
         const stats = Object.values(contributorsMap).map(c => ({
@@ -222,10 +231,13 @@ export async function computeOrgContributors(orgId, token) {
             totalScore: Math.min(100, Math.round(c.totalScore * 10) / 10)
         }));
 
-        return stats.sort((a, b) => b.totalScore - a.totalScore);
+        return {
+            contributors: stats.sort((a, b) => b.totalScore - a.totalScore),
+            recentEvents: recentEvents.slice(0, 10)
+        };
 
     } catch (error) {
         console.error("Org contributors error:", error);
-        return [];
+        return { contributors: [], recentEvents: [] };
     }
 }

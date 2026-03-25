@@ -98,15 +98,17 @@ export default function ContributorDashboardPage() {
     }
   };
 
-  useEffect(() => {
-      const urlParams = new URLSearchParams(window.location.search);
-      let t = urlParams.get("token") || localStorage.getItem("token") || "";
-      if (t) {
-          setToken(t);
-          localStorage.setItem("token", t);
-          fetchData(t);
-      }
-  }, []);
+    useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        let t = urlParams.get("token") || localStorage.getItem("token") || "";
+        if (t) {
+            setToken(t);
+            localStorage.setItem("token", t);
+            fetchData(t);
+            // Clean up URL to hide the token and keep it secure
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    }, []);
 
   const addRepo = async () => {
     if (!newRepo) return;

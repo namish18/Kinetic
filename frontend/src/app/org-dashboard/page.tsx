@@ -31,6 +31,15 @@ import {
 /* ───────── Types ───────── */
 type TxStatus = "pending" | "finalized" | "sealed";
 
+interface RecentEvent {
+    username: string;
+    type: string;
+    repo: string;
+    score: number;
+    timestamp: string;
+    cid: string;
+}
+
 interface ContributorInfo {
     username: string;
     totalScore: number;
@@ -68,6 +77,7 @@ export default function OrgDashboardPage() {
     const [token, setToken] = useState("");
     const [repos, setRepos] = useState<RepoConfig[]>([]);
     const [contributors, setContributors] = useState<ContributorInfo[]>([]);
+    const [recentEvents, setRecentEvents] = useState<RecentEvent[]>([]);
     const [loading, setLoading] = useState(true);
     const [newRepo, setNewRepo] = useState("");
     const [signatures, setSignatures] = useState([true, true, false]);
@@ -86,12 +96,15 @@ export default function OrgDashboardPage() {
             const rData = await repoRes.json();
             if (rData.success) setRepos(rData.repositories || []);
 
-            // Contributors (Real Algorithm Results)
+            // Contributors & Events (Real Algorithm Results)
             const contRes = await fetch("http://localhost:5000/api/org/contributors", {
                 headers: { "Authorization": `Bearer ${authToken}` }
             });
             const cData = await contRes.json();
-            if (cData.success) setContributors(cData.contributors || []);
+            if (cData.success) {
+                setContributors(cData.contributors || []);
+                setRecentEvents(cData.recentEvents || []);
+            }
 
         } catch (e) {
             console.error(e);
@@ -107,6 +120,8 @@ export default function OrgDashboardPage() {
             setToken(t);
             localStorage.setItem("token", t);
             fetchData(t);
+            // Securely clear token from address bar
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
     }, []);
 
@@ -192,7 +207,7 @@ export default function OrgDashboardPage() {
                 <div className="flex items-center gap-4">
                     <button 
                         onClick={() => fetchData(token)}
-                        className="p-3 rounded-2xl bg-secondary hover:bg-secondary/80 transition-all"
+                        className="p-3 rounded-2xl bg-secondary hover:bg-secondary/80 transition-all text-muted-foreground"
                     >
                         {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCcw className="w-5 h-5" />}
                     </button>
@@ -213,7 +228,7 @@ export default function OrgDashboardPage() {
                             <Wallet className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">{totalFlowPool} FLOW</div>
+                    <div className="text-3xl font-black font-mono">{totalFlowPool.toLocaleString()} FLOW</div>
                     <div className="text-sm text-emerald-500 font-medium mt-1 flex items-center gap-1">
                         <TrendingUp className="w-4 h-4" />
                         Verified Rewards
@@ -245,11 +260,11 @@ export default function OrgDashboardPage() {
                 <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
                     <div className="flex items-center justify-between mb-4">
                         <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Cycle Status</span>
-                        <div className="p-2 bg-amber-500/10 rounded-lg text-amber-500 group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                            <Clock className="w-5 h-5" />
+                        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-500 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                            <Activity className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">LIVE</div>
+                    <div className="text-3xl font-black font-mono uppercase">Live</div>
                     <div className="w-full bg-muted rounded-full h-2 mt-4 overflow-hidden">
                         <div className="bg-emerald-500 h-full w-[100%] transition-all" />
                     </div>
@@ -338,7 +353,7 @@ export default function OrgDashboardPage() {
                     <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden shadow-sm">
                         <div className="p-8 border-b border-border flex items-center justify-between bg-muted/5">
                             <div className="flex items-center gap-3">
-                                <Database className="w-6 h-6 text-primary" />
+                                <Award className="w-6 h-6 text-primary" />
                                 <h2 className="text-2xl font-black tracking-tight">Algorithmic Valuation</h2>
                             </div>
                             <button className="text-[10px] font-black text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5 px-4 py-2 border border-border rounded-xl bg-background uppercase tracking-widest shadow-sm">
@@ -392,7 +407,7 @@ export default function OrgDashboardPage() {
                                     ))}
                                     {contributors.length === 0 && (
                                         <tr>
-                                            <td colSpan={5} className="px-8 py-12 text-center text-muted-foreground italic font-medium">No contributors found for the specified repositories and timeframe.</td>
+                                            <td colSpan={5} className="px-8 py-12 text-center text-muted-foreground italic font-medium opacity-60">No contributors discovered in organization repositories.</td>
                                         </tr>
                                     )}
                                 </tbody>
@@ -404,20 +419,21 @@ export default function OrgDashboardPage() {
                 {/* Right Column */}
                 <div className="space-y-8">
                     {/* Execution Center */}
-                    <div className="bg-foreground text-background rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group">
+                    <div className="bg-[#0c0c0c] text-white rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-primary/20 blur-3xl opacity-50 translate-x-1/2 -translate-y-1/2" />
                         <div className="relative z-10">
                             <div className="flex items-center gap-3 mb-8">
-                                <Zap className="w-6 h-6 text-primary" />
+                                <ShieldAlert className="w-6 h-6 text-primary" />
                                 <h2 className="text-2xl font-black tracking-tight uppercase tracking-tighter">Settlement Layer</h2>
                             </div>
 
                             <div className="space-y-1 mb-8">
-                                <div className="text-[10px] font-black text-background/50 uppercase tracking-widest mb-3">Admin Signatures Locked</div>
+                                <div className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-3">Governance Approvals (2/3)</div>
                                 <div className="flex gap-2">
                                     {signatures.map((signed, i) => (
                                         <div
                                             key={i}
-                                            className={`flex-1 h-14 rounded-2xl border-2 flex items-center justify-center transition-all ${signed ? 'bg-primary border-primary text-primary-foreground shadow-glow-sm' : 'bg-background/10 border-background/20 text-background/20'}`}
+                                            className={`flex-1 h-14 rounded-2xl border flex items-center justify-center transition-all ${signed ? 'bg-primary/20 border-primary text-primary' : 'bg-white/5 border-white/10 text-white/10'}`}
                                         >
                                             {signed ? <CheckCircle className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
                                         </div>
@@ -425,12 +441,12 @@ export default function OrgDashboardPage() {
                                 </div>
                             </div>
 
-                            <p className="text-sm text-background/60 mb-8 leading-relaxed font-medium">
-                                Settlement requires 2/3 admin signatures. Execute to stream <span className="text-primary font-black">{totalFlowPool} FLOW</span> across all verified contributor nodes.
+                            <p className="text-sm text-white/50 mb-8 leading-relaxed font-medium">
+                                Multi-sig required to stream <span className="text-primary font-black">{totalFlowPool.toLocaleString()} FLOW</span>. Transaction builds upon <span className="underline decoration-primary/50 underline-offset-4 decoration-2">Algorithmic Valuation Snapshot #421</span>.
                             </p>
 
-                            <button className="w-full bg-primary text-primary-foreground font-black py-5 rounded-[1.5rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest shadow-glow-sm">
-                                Execute Settlement
+                            <button className="w-full bg-primary text-primary-foreground font-black py-4 rounded-[1.25rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest">
+                                Sign & Execute
                             </button>
                         </div>
                     </div>
@@ -442,48 +458,60 @@ export default function OrgDashboardPage() {
                                 <Award className="w-5 h-5 text-primary" />
                                 <h2 className="text-xl font-bold font-heading">Leaderboard</h2>
                             </div>
-                            <TrendingUp className="w-4 h-4 text-emerald-500" />
+                            <span className="text-[9px] font-black bg-emerald-500/10 text-emerald-500 px-2 py-1 rounded">CYCLE 4</span>
                         </div>
                         <div className="space-y-6">
                             {contributors.slice(0, 5).map((user, i) => (
                                 <div key={user.username} className="flex items-center justify-between p-3 rounded-2xl hover:bg-muted/10 transition-all cursor-pointer">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-black border border-primary/20 uppercase">
-                                            {user.username.charAt(0)}
+                                        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
+                                            <img src={user.avatar} className="w-8 h-8 rounded-lg" alt="" />
                                         </div>
                                         <div>
                                             <div className="text-sm font-black">@{user.username}</div>
-                                            <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest">Global Rank #{i+1}</div>
+                                            <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest">Global Influencer</div>
                                         </div>
                                     </div>
                                     <div className="text-right">
                                         <div className="text-sm font-black font-mono text-primary">{user.totalScore}</div>
-                                        <div className="text-[9px] text-muted-foreground uppercase font-black">PTS</div>
+                                        <div className="text-[9px] text-muted-foreground uppercase font-black">Pts</div>
                                     </div>
                                 </div>
                             ))}
                             {contributors.length === 0 && (
-                                <p className="text-xs text-muted-foreground italic text-center">Sync contributors to view ranking</p>
+                                <p className="text-xs text-muted-foreground italic text-center py-4">Scanning for top contributors...</p>
                             )}
                         </div>
                     </div>
 
-                    {/* Infrastructure Audit */}
-                    <div className="bg-[#050505] border border-white/5 rounded-[2.5rem] p-8">
+                    {/* Infrastructure Audit (Real Events) */}
+                    <div className="bg-[#050505] border border-white/5 rounded-[2.5rem] p-8 shadow-inner">
                         <div className="flex items-center gap-3 mb-6">
                             <Database className="w-4 h-4 text-primary" />
-                            <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Audit Archive</h3>
+                            <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Audit Archive (IPFS)</h3>
                         </div>
                         <div className="space-y-4">
-                            {[1, 2].map((i) => (
-                                <div key={i} className="p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between group hover:bg-white/10 transition-all cursor-pointer">
-                                    <div className="flex items-center gap-3">
-                                        <FileSearch className="w-4 h-4 text-primary" />
-                                        <span className="text-[10px] font-mono text-white/50">cid_v1_...{Math.random().toString(16).substring(0,8)}</span>
+                            {recentEvents.map((event, i) => (
+                                <div key={i} className="p-4 bg-white/5 border border-white/10 rounded-2xl flex flex-col gap-2 group hover:bg-white/10 transition-all cursor-pointer">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                                            <span className="text-[10px] font-black text-white/80">@{event.username} Merged</span>
+                                        </div>
+                                        <span className="text-[9px] font-black text-emerald-500">+{event.score} PTS</span>
                                     </div>
-                                    <ExternalLink className="w-3 h-3 text-white/20 group-hover:text-primary transition-colors" />
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span className="text-[9px] font-mono text-white/30 truncate max-w-[150px]">{event.cid}</span>
+                                        <ExternalLink className="w-3 h-3 text-white/10 group-hover:text-primary transition-colors flex-shrink-0" />
+                                    </div>
                                 </div>
                             ))}
+                            {recentEvents.length === 0 && (
+                                <div className="text-center py-8">
+                                    <FileSearch className="w-8 h-8 text-white/10 mx-auto mb-3" />
+                                    <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest">No recent audit logs</p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>

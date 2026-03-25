@@ -30,19 +30,22 @@ router.get(
     passport.authenticate('github', { failureRedirect: '/?error=auth_failed' }),
     async (req, res) => {
         // Update the user's role if it was set in the session (e.g., during signup)
+        let finalRole = req.user.role || 'contributor';
+        
         if (req.session.role && req.user.role !== req.session.role) {
-            req.user.role = req.session.role;
-            await req.user.save();
+            finalRole = req.session.role;
+            await User.findByIdAndUpdate(req.user._id, { role: finalRole });
+            console.log(`🔄 User @${req.user.github} upgraded to ${finalRole}`);
         }
 
         const token = jwt.sign(
-            { id: req.user._id, github: req.user.github, did: req.user.did, role: req.user.role },
+            { id: req.user._id, github: req.user.github, did: req.user.did, role: finalRole },
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
 
         const frontendURL = process.env.FRONTEND_URL || 'http://localhost:3000';
-        const redirectPath = req.user.role === 'organization' ? '/org-dashboard' : '/dashboard';
+        const redirectPath = finalRole === 'organization' ? '/org-dashboard' : '/dashboard';
         res.redirect(`${frontendURL}${redirectPath}?token=${token}`);
     }
 );
