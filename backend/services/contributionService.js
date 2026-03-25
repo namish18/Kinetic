@@ -1,6 +1,11 @@
 /**
  * Contribution Scoring Service — based on contribution_algo.md
+ * 
+ * This service fetches real data from GitHub and computes a score 
+ * following the "Final Algorithm" specifications.
  */
+
+import User from '../models/User.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
@@ -12,37 +17,33 @@ const DAO_INFLUENCE_MU = 0.3;
 export function extractPRMetrics(pr) {
     // 1. Complexity (log-scaled lines)
     const linesChanged = (pr.additions || 0) + (pr.deletions || 0);
-    const complexity = Math.log(linesChanged + 1) / Math.log(MAX_LINES + 1);
+    const complexity = Math.min(1.0, Math.log(linesChanged + 1) / Math.log(MAX_LINES + 1));
 
     // 2. Impact (proxied by changed files and commits)
     const impactRaw = ((pr.changed_files || 0) * 2 + (pr.commits || 0)) / 50;
     const impact = Math.min(1.0, impactRaw);
 
-    // 3. Quality (proxy)
-    const quality = 0.9;
+    // 3. Quality (proxy: based on deletions/refactor ratio)
+    let quality = 0.8; 
+    if (pr.deletions > pr.additions) quality += 0.1; // refactor bonus
+    if (pr.merged === true) quality += 0.1; // merge bonus
+    quality = Math.min(1.0, quality);
 
     // 4. Review (proxy based on review comments)
     const reviewRaw = (pr.review_comments || 0) / 10;
     const review = Math.min(1.0, reviewRaw + 0.5);
 
-    // 5. Priority (proxy based on labels)
-    const hasPriorityLabel = pr.labels && pr.labels.some(l => l.name.toLowerCase().includes('priority') || l.name.toLowerCase().includes('high'));
-    const priority = hasPriorityLabel ? 1.0 : 0.5;
+    // 5. Priority (proxy based on repo popularity or labels)
+    const hasPriorityLabel = pr.labels && pr.labels.some(l => 
+        ['priority', 'high', 'critical', 'urgent'].some(k => l.name.toLowerCase().includes(k))
+    );
+    const priority = hasPriorityLabel ? 1.0 : 0.4;
 
-    return { 
-        impact: Math.max(0, impact), 
-        complexity: Math.max(0, complexity), 
-        quality, 
-        review, 
-        priority 
-    };
+    return { impact, complexity, quality, review, priority };
 }
 
 /**
- * Step 1-6: Computes the Final Score for a PR based on contribution_algo.md
- * @param {Object} metrics - { impact, complexity, quality, review, priority }
- * @param {Object} weights - { impact, complexity, quality, review, priority }
- * @param {Object} context - { reputation: number, daoScore: number }
+ * Steps 1-6: Computes the Final Score for a PR based on contribution_algo.md
  */
 export function calculatePRScore(metrics, weights, context = {}) {
     // Step 1: Anti-Gaming Filters
@@ -53,60 +54,178 @@ export function calculatePRScore(metrics, weights, context = {}) {
         return { score: 0, reason: "Failed spam / micro PR filter" };
     }
 
-    // Step 2: Base Score
-    const baseScore = 
-        (weights.impact * metrics.impact) +
-        (weights.complexity * metrics.complexity) +
-        (weights.quality * metrics.quality) +
-        (weights.review * metrics.review) +
-        (weights.priority * metrics.priority);
+    // Default weights if not provided
+    const w = weights || { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 };
 
-    // Step 3: Complexity anti-gaming is already applied via log-scaling in extractPRMetrics.
+    // Step 2: Base Score (Weighted average of 5 dimensions)
+    const baseScore = 
+        (w.impact * metrics.impact) +
+        (w.complexity * metrics.complexity) +
+        (w.quality * metrics.quality) +
+        (w.review * metrics.review) +
+        (w.priority * metrics.priority);
 
     // Step 4: Reputation System
     const rawReputation = context.reputation || 0;
-    const R_max = 1000;
+    const R_max = 500; 
     const R_norm = Math.max(0, Math.log(rawReputation + 1) / Math.log(R_max + 1));
     
     let repMult = 1 + (REPUTATION_INFLUENCE_LAMBDA * Math.min(1.0, R_norm));
-    repMult = Math.min(1.5, repMult); // capped prevent dominance
+    repMult = Math.min(1.5, repMult); 
 
     // Step 5: DAO Score
-    const daoScore = context.daoScore !== undefined ? context.daoScore : 0.5; // neutral D_i 
+    const daoScore = context.daoScore !== undefined ? context.daoScore : 0.5; 
     let daoAdj = 1 + DAO_INFLUENCE_MU * (daoScore - 0.5);
-    daoAdj = Math.max(0.8, Math.min(1.2, daoAdj)); // Clamp DAO influence
+    daoAdj = Math.max(0.8, Math.min(1.2, daoAdj));
 
     // Step 6: Final Score
     const finalScore = baseScore * repMult * daoAdj;
 
-    // Optional Step 7: Anti-gaming post adjustments (Diminishing returns handled externally if we know historical PR count).
-
     return {
         score: finalScore,
-        details: {
-            metrics,
-            weights,
-            baseScore,
-            repMult,
-            daoAdj
-        }
+        details: { metrics, weights: w, baseScore, repMult, daoAdj }
     };
 }
 
 /**
- * Helper to wrap the old computeMSTS call for backward compatibility with the frontend user dashboard.
+ * Main function: Fetches real PRs and computes the overall Contribution Score
  */
-export async function computeMSTS(username, token, options = {}) {
-    const mockMetrics = { impact: 0.8, complexity: 0.7, quality: 0.9, review: 0.8, priority: 0.5 };
-    const mockWeights = { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 };
-    
-    // Assume user has some reputation for mock
-    const result = calculatePRScore(mockMetrics, mockWeights, { reputation: 100, daoScore: 0.6 });
-    
-    return {
-        username,
-        // scale up abstract score so it aligns with 0-100 UI visualizer
-        finalScore: Math.round(result.score * 100 * 10) / 10, 
-        layers: result.details
+export async function computeContributionScore(username, token, options = {}) {
+    const githubToken = token || process.env.GITHUB_PAT;
+    const headers = {
+        'Accept': 'application/vnd.github.v3+json',
+        ...(githubToken && { 'Authorization': `token ${githubToken}` })
     };
+
+    try {
+        const user = await User.findOne({ github: username });
+        const userRepos = user?.repositories || [];
+
+        // Fetch merged PRs using search API
+        const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
+        const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=15`, { headers });
+        const searchData = await searchRes.json();
+        
+        if (!searchData.items || searchData.items.length === 0) {
+            return { username, finalScore: 0, prs: [], meta: { prCount: 0 } };
+        }
+
+        let totalPoints = 0;
+        const prDetails = [];
+
+        for (const item of searchData.items) {
+            const prUrl = item.pull_request?.url;
+            if (!prUrl) continue;
+
+            const prRes = await fetch(prUrl, { headers });
+            const prData = await prRes.json();
+
+            const repoFullName = prData.base?.repo?.full_name;
+            const repoConfig = userRepos.find(r => r.name === repoFullName);
+            const weights = repoConfig?.weights || null;
+
+            const metrics = extractPRMetrics(prData);
+            const result = calculatePRScore(metrics, weights, { reputation: userRepos.length * 10 });
+
+            // Max points per PR is roughly (1 * 1.5 * 1.2) = 1.8. 
+            // We scale this so a high impact PR is ~25-30 pts.
+            const prPoints = Math.round(result.score * 20 * 10) / 10;
+            totalPoints += prPoints;
+
+            prDetails.push({
+                id: prData.number,
+                title: prData.title,
+                repo: repoFullName,
+                score: prPoints,
+                status: 'merged',
+                date: prData.merged_at?.split('T')[0] || 'N/A',
+                link: prData.html_url
+            });
+        }
+
+        // Hard cap at 100
+        const finalScore = Math.min(100, Math.round(totalPoints * 10) / 10);
+
+        return {
+            username,
+            finalScore,
+            prs: prDetails,
+            meta: {
+                computeTimeMs: Date.now() - (options.startTime || Date.now()),
+                prCount: prDetails.length
+            }
+        };
+    } catch (error) {
+        console.error("Error computing score:", error);
+        return { username, finalScore: 0, prs: [], error: error.message };
+    }
+}
+
+/**
+ * Computes contributors for an organization based on its tracked repositories
+ */
+export async function computeOrgContributors(orgId, token) {
+    const githubToken = token || process.env.GITHUB_PAT;
+    const headers = {
+        'Accept': 'application/vnd.github.v3+json',
+        ...(githubToken && { 'Authorization': `token ${githubToken}` })
+    };
+
+    try {
+        const org = await User.findById(orgId);
+        if (!org || org.role !== 'organization') return [];
+
+        const repoNames = org.repositories.map(r => r.name);
+        if (repoNames.length === 0) return [];
+
+        // Search for merged PRs across all organization repositories
+        const repoQuery = repoNames.map(name => `repo:${name}`).join(' ');
+        const searchQuery = `${repoQuery} is:pr is:merged updated:>2024-01-01`;
+        const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=30`, { headers });
+        const searchData = await searchRes.json();
+
+        if (!searchData.items) return [];
+
+        // Group by contributor
+        const contributorsMap = {};
+
+        for (const item of searchData.items) {
+            const username = item.user.login;
+            const prUrl = item.pull_request.url;
+
+            const prRes = await fetch(prUrl, { headers });
+            const prData = await prRes.json();
+
+            const repoFullName = prData.base.repo.full_name;
+            const repoConfig = org.repositories.find(r => r.name === repoFullName);
+            
+            const metrics = extractPRMetrics(prData);
+            const result = calculatePRScore(metrics, repoConfig.weights, { reputation: 100 });
+            
+            const prScore = result.score * 20;
+
+            if (!contributorsMap[username]) {
+                contributorsMap[username] = {
+                    username,
+                    totalScore: 0,
+                    prCount: 0,
+                    avatar: item.user.avatar_url
+                };
+            }
+
+            contributorsMap[username].totalScore += prScore;
+            contributorsMap[username].prCount += 1;
+        }
+
+        const stats = Object.values(contributorsMap).map(c => ({
+            ...c,
+            totalScore: Math.min(100, Math.round(c.totalScore * 10) / 10)
+        }));
+
+        return stats.sort((a, b) => b.totalScore - a.totalScore);
+
+    } catch (error) {
+        console.error("Org contributors error:", error);
+        return [];
+    }
 }

@@ -1,13 +1,13 @@
 /**
  * Contribution Scoring API Routes
  *
- * Provides endpoints to compute and retrieve MSTS scores for GitHub users.
+ * Provides endpoints to compute and retrieve Contribution scores for GitHub users.
  */
 
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import {
-    computeMSTS
+    computeContributionScore
 } from '../services/contributionService.js';
 
 const router = express.Router();
@@ -29,57 +29,47 @@ function authenticateToken(req, res, next) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Full MSTS Score
-// ─────────────────────────────────────────────────────────────
-
 /**
  * GET /api/contribution/score/:username
- * Compute the full MSTS score for any GitHub user (public endpoint).
+ * Compute the full Contribution score for any GitHub user (public endpoint).
  */
 router.get('/score/:username', async (req, res) => {
     try {
         const { username } = req.params;
         const githubToken = req.query.token || process.env.GITHUB_PAT || null;
-        const proofOfBuild = req.query.proofOfBuild !== 'false';
-
-        console.log(`\n📊 Computing MSTS for @${username}...`);
-        const result = await computeMSTS(username, githubToken, { proofOfBuild });
-        console.log(`✅ MSTS for @${username}: ${result.finalScore} (${result.meta.computeTimeMs}ms)`);
+        
+        console.log(`\n📊 Computing Contribution Score for @${username}...`);
+        const result = await computeContributionScore(username, githubToken, { startTime: Date.now() });
+        console.log(`✅ Score for @${username}: ${result.finalScore}`);
 
         res.json({ success: true, ...result });
     } catch (error) {
-        console.error(`❌ MSTS computation failed for @${req.params.username}:`, error.message);
+        console.error(`❌ Score computation failed for @${req.params.username}:`, error.message);
         res.status(500).json({ error: 'Score computation failed', message: error.message });
     }
 });
 
 /**
- * GET /api/contribution/score/me
- * Compute MSTS score for the authenticated user (JWT required).
+ * GET /api/contribution/me
+ * Compute Contribution score for the authenticated user (JWT required).
  */
 router.get('/me', authenticateToken, async (req, res) => {
     try {
         const githubToken = process.env.GITHUB_PAT || null;
-        const proofOfBuild = req.query.proofOfBuild !== 'false';
 
-        console.log(`\n📊 Computing MSTS for authenticated user @${req.user.github}...`);
-        const result = await computeMSTS(req.user.github, githubToken, { proofOfBuild });
+        console.log(`\n📊 Computing Contribution Score for authenticated user @${req.user.github}...`);
+        const result = await computeContributionScore(req.user.github, githubToken, { startTime: Date.now() });
 
         res.json({ success: true, ...result });
     } catch (error) {
-        console.error('❌ MSTS computation failed:', error.message);
+        console.error('❌ Score computation failed:', error.message);
         res.status(500).json({ error: 'Score computation failed', message: error.message });
     }
 });
 
-// ─────────────────────────────────────────────────────────────
-//  Compare Users
-// ─────────────────────────────────────────────────────────────
-
 /**
  * GET /api/contribution/compare?users=user1,user2,user3
- * Compare MSTS scores across multiple users (max 5).
+ * Compare Contribution scores across multiple users (max 5).
  */
 router.get('/compare', async (req, res) => {
     try {
@@ -91,10 +81,10 @@ router.get('/compare', async (req, res) => {
         const usernames = usersParam.split(',').map(u => u.trim()).filter(Boolean).slice(0, 5);
         const token = req.query.token || process.env.GITHUB_PAT || null;
 
-        console.log(`\n📊 Comparing MSTS for: ${usernames.join(', ')}`);
+        console.log(`\n📊 Comparing Scores for: ${usernames.join(', ')}`);
 
         const results = await Promise.allSettled(
-            usernames.map(u => computeMSTS(u, token))
+            usernames.map(u => computeContributionScore(u, token))
         );
 
         const comparison = usernames.map((username, i) => {
@@ -104,7 +94,6 @@ router.get('/compare', async (req, res) => {
             return { username, finalScore: 0, error: results[i].reason?.message };
         });
 
-        // Sort by final score descending
         comparison.sort((a, b) => (b.finalScore || 0) - (a.finalScore || 0));
 
         res.json({

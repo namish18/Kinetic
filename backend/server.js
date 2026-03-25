@@ -23,7 +23,7 @@ import connectDB from './config/connectdb.js';
 import authRoutes from './routes/auth.js';
 import contributionRoutes from './routes/contribution.js';
 import kineticRoutes from './routes/kinetic.js';
-import orgRoutes from './routes/org.js';
+import orgRoutes from './routes/repo.js';
 import webhookRoutes from './routes/webhook.js';
 import { stopHelia } from './services/didService.js';
 

@@ -17,21 +17,55 @@ function authenticateToken(req, res, next) {
     }
 }
 
-function requireOrg(req, res, next) {
-    if (req.user.role !== 'organization') {
-        return res.status(403).json({ error: 'Only organizations can perform this action' });
+import { computeOrgContributors } from '../services/contributionService.js';
+
+/**
+ * GET /api/org/all
+ * Public endpoint to get all repositories across the platform.
+ */
+router.get('/all', async (req, res) => {
+    try {
+        const users = await User.find({ "repositories.0": { "$exists": true } });
+        const allRepos = [];
+        users.forEach(u => {
+            u.repositories.forEach(r => {
+                allRepos.push({
+                    name: r.name,
+                    owner: u.github,
+                    ownerAvatar: u.avatarUrl || `https://github.com/${u.github}.png`,
+                    weights: r.weights,
+                    totalPool: 1000 + (r.name.length * 50), // Semi-stable pool
+                    activePRs: 5 + (r.name.length % 5)
+                });
+            });
+        });
+        res.json({ success: true, repositories: allRepos });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error', message: error.message });
     }
-    next();
-}
+});
+
+/**
+ * GET /api/org/contributors
+ * Get real contributors for the repositories of the current organization.
+ */
+router.get('/contributors', authenticateToken, async (req, res) => {
+    try {
+        const contributors = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
+        res.json({ success: true, contributors });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error', message: error.message });
+    }
+});
 
 /**
  * GET /api/org/info
- * Get org repositories (includes branches and weights)
+ * Get current user's repositories
  */
-router.get('/info', authenticateToken, requireOrg, async (req, res) => {
+router.get('/info', authenticateToken, async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
-        res.json({ success: true, repositories: user.repositories });
+        res.json({ success: true, repositories: user.repositories || [] });
     } catch (error) {
         res.status(500).json({ error: 'Server error', message: error.message });
     }
@@ -39,24 +73,22 @@ router.get('/info', authenticateToken, requireOrg, async (req, res) => {
 
 /**
  * POST /api/org/repositories
- * Add a repository
  */
-router.post('/repositories', authenticateToken, requireOrg, async (req, res) => {
+router.post('/repositories', authenticateToken, async (req, res) => {
     try {
         const { repository } = req.body;
-        if (!repository) return res.status(400).json({ error: 'Repository name required (e.g. owner/repo)' });
+        if (!repository) return res.status(400).json({ error: 'Repository name required' });
 
         const user = await User.findById(req.user.id);
         const exists = user.repositories.find(r => r.name === repository);
         if (!exists) {
             user.repositories.push({
                 name: repository,
-                targetBranches: ['main'], // default
+                targetBranches: ['main'], 
                 weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 }
             });
             await user.save();
         }
-
         res.json({ success: true, repositories: user.repositories });
     } catch (error) {
         res.status(500).json({ error: 'Server error', message: error.message });
@@ -65,23 +97,18 @@ router.post('/repositories', authenticateToken, requireOrg, async (req, res) => 
 
 /**
  * PUT /api/org/repositories/:repoId/branches
- * Set target branches
  */
-router.put('/repositories/:repoId/branches', authenticateToken, requireOrg, async (req, res) => {
+router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
     try {
         const repoName = decodeURIComponent(req.params.repoId);
         const { targetBranches } = req.body;
 
         const user = await User.findById(req.user.id);
         const repo = user.repositories.find(r => r.name === repoName);
-        
-        if (!repo) {
-            return res.status(404).json({ error: 'Repository not found' });
-        }
+        if (!repo) return res.status(404).json({ error: 'Repository not found' });
         
         repo.targetBranches = targetBranches;
         await user.save();
-
         res.json({ success: true, repositories: user.repositories });
     } catch (error) {
         res.status(500).json({ error: 'Server error', message: error.message });
@@ -90,29 +117,24 @@ router.put('/repositories/:repoId/branches', authenticateToken, requireOrg, asyn
 
 /**
  * PUT /api/org/repositories/:repoId/weights
- * Update algorithm weights for a specific repo
  */
-router.put('/repositories/:repoId/weights', authenticateToken, requireOrg, async (req, res) => {
+router.put('/repositories/:repoId/weights', authenticateToken, async (req, res) => {
     try {
         const repoName = decodeURIComponent(req.params.repoId);
         const { impact, complexity, quality, review, priority } = req.body;
         
         const user = await User.findById(req.user.id);
         const repo = user.repositories.find(r => r.name === repoName);
-        
-        if (!repo) {
-            return res.status(404).json({ error: 'Repository not found' });
-        }
+        if (!repo) return res.status(404).json({ error: 'Repository not found' });
         
         repo.weights = {
-            impact: impact !== undefined ? impact : repo.weights.impact,
-            complexity: complexity !== undefined ? complexity : repo.weights.complexity,
-            quality: quality !== undefined ? quality : repo.weights.quality,
-            review: review !== undefined ? review : repo.weights.review,
-            priority: priority !== undefined ? priority : repo.weights.priority
+            impact: impact ?? repo.weights.impact,
+            complexity: complexity ?? repo.weights.complexity,
+            quality: quality ?? repo.weights.quality,
+            review: review ?? repo.weights.review,
+            priority: priority ?? repo.weights.priority
         };
         await user.save();
-
         res.json({ success: true, repositories: user.repositories });
     } catch (error) {
         res.status(500).json({ error: 'Server error', message: error.message });

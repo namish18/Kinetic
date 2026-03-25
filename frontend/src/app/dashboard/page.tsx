@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   GitPullRequest,
   Clock,
@@ -20,7 +20,11 @@ import {
   Zap,
   Globe,
   Archive,
-  ArrowRight
+  ArrowRight,
+  Building2,
+  RefreshCcw,
+  Loader2,
+  Github
 } from "lucide-react";
 
 /* ───────── Flow & IPFS Themed Icons ───────── */
@@ -35,56 +39,150 @@ const IconFlow = () => (
 type PRStatus = "submitted" | "merged" | "eligible" | "payout";
 
 interface ContributorPR {
-  id: string;
+  id: string | number;
   title: string;
   repo: string;
-  status: PRStatus;
-  mstsScore: number;
+  status: PRStatus | string;
+  score: number;
   date: string;
   link: string;
 }
 
-const mockPRs: ContributorPR[] = [
-  { id: "PR-901", title: "Refactor core encryption module", repo: "go-ipfs", status: "payout", mstsScore: 94, date: "2026-03-01", link: "#" },
-  { id: "PR-912", title: "Add DHT node discovery optimization", repo: "libp2p", status: "eligible", mstsScore: 88, date: "2026-03-05", link: "#" },
-  { id: "PR-944", title: "Fix peer routing table churn", repo: "rust-libp2p", mstsScore: 0, status: "merged", date: "2026-03-08", link: "#" },
-  { id: "PR-955", title: "Implement CID-based auth headers", repo: "lotus", mstsScore: 0, status: "submitted", date: "2026-03-11", link: "#" },
-];
+interface RepoConfig {
+  name: string;
+  targetBranches: string[];
+  weights: {
+    impact: number;
+    complexity: number;
+    quality: number;
+    review: number;
+    priority: number;
+  };
+}
 
 const statusOrder: PRStatus[] = ["submitted", "merged", "eligible", "payout"];
 
 export default function ContributorDashboardPage() {
-  const currentCycle = 5;
-  const currentWeek = 4;
+  const [token, setToken] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [scoreData, setScoreData] = useState<any>(null);
+  const [repos, setRepos] = useState<RepoConfig[]>([]);
+  const [newRepo, setNewRepo] = useState("");
+  const [editBranches, setEditBranches] = useState<Record<string, string>>({});
+  const [editWeights, setEditWeights] = useState<Record<string, any>>({});
 
-  const [token, setToken] = useState("");
-  const [scoreInfo, setScoreInfo] = useState<{
-      finalScore?: number;
-      payout?: number;
-  } | null>(null);
+  const fetchData = async (authToken: string) => {
+    setLoading(true);
+    try {
+        // Fetch Contribution Score (Real data from algorithm)
+        const scoreRes = await fetch("http://localhost:5000/api/contribution/me", {
+            headers: { "Authorization": `Bearer ${authToken}` }
+        });
+        const sData = await scoreRes.json();
+        if (sData.success) {
+            setScoreData(sData);
+        }
 
-  React.useEffect(() => {
+        // Fetch Repo Info
+        const repoRes = await fetch("http://localhost:5000/api/org/info", {
+            headers: { "Authorization": `Bearer ${authToken}` }
+        });
+        const rData = await repoRes.json();
+        if (rData.success) {
+            setRepos(rData.repositories || []);
+        }
+    } catch (e) {
+        console.error("Fetch error:", e);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  useEffect(() => {
       const urlParams = new URLSearchParams(window.location.search);
       let t = urlParams.get("token") || localStorage.getItem("token") || "";
       if (t) {
           setToken(t);
           localStorage.setItem("token", t);
-          
-          fetch("http://localhost:5000/api/contribution/me?proofOfBuild=false", {
-              headers: { "Authorization": `Bearer ${t}` }
-          })
-          .then(res => res.json())
-          .then(data => {
-              if (data.success && data.finalScore !== undefined) {
-                  setScoreInfo({
-                      finalScore: data.finalScore,
-                      payout: Math.round(data.finalScore * 5)
-                  });
-              }
-          })
-          .catch(console.error);
+          fetchData(t);
       }
   }, []);
+
+  const addRepo = async () => {
+    if (!newRepo) return;
+    try {
+        const res = await fetch("http://localhost:5000/api/org/repositories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ repository: newRepo })
+        });
+        const data = await res.json();
+        if (data.success) {
+            setRepos(data.repositories);
+            setNewRepo("");
+        }
+    } catch (e) {
+        console.error(e);
+    }
+  };
+
+  const updateTargetBranches = async (repoName: string) => {
+    try {
+        const branchesString = editBranches[repoName] ?? "";
+        const branchesArray = branchesString.split(",").map(b => b.trim()).filter(Boolean);
+        const res = await fetch(`http://localhost:5000/api/org/repositories/${encodeURIComponent(repoName)}/branches`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify({ targetBranches: branchesArray })
+        });
+        const data = await res.json();
+        if (data.success) {
+            setRepos(data.repositories);
+            alert("Target branches updated!");
+        }
+    } catch (e) {
+        console.error(e);
+    }
+  };
+
+  const updateRepoWeights = async (repoName: string, defaults: any) => {
+    try {
+        const weightsToSave = editWeights[repoName] || defaults;
+        const res = await fetch(`http://localhost:5000/api/org/repositories/${encodeURIComponent(repoName)}/weights`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+            body: JSON.stringify(weightsToSave)
+        });
+        const data = await res.json();
+        if (data.success) {
+            setRepos(data.repositories);
+            alert("Weights updated successfully!");
+        }
+    } catch (e) {
+        console.error(e);
+    }
+  };
+
+  if (loading && !scoreData) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+            <div className="flex flex-col items-center gap-6">
+                <div className="relative">
+                    <div className="w-20 h-20 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+                    <Zap className="w-8 h-8 text-primary absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                </div>
+                <div className="text-center">
+                    <h2 className="text-2xl font-black tracking-tight mb-2">Syncing Your GitHub Contributions</h2>
+                    <p className="text-muted-foreground animate-pulse">Running Final Valuation Algorithm...</p>
+                </div>
+            </div>
+        </div>
+      );
+  }
+
+  const finalScore = scoreData?.finalScore || 0;
+  const prs = scoreData?.prs || [];
+  const payout = Math.round(finalScore * 5); // Example multiplier
 
   return (
     <div className="min-h-screen pt-28 pb-16 px-4 md:px-8 max-w-[1440px] mx-auto w-full font-sans">
@@ -100,11 +198,14 @@ export default function ContributorDashboardPage() {
           <p className="text-muted-foreground text-lg ml-1">Building the Decentralized Web · Protocol Labs Network</p>
         </div>
         <div className="flex items-center gap-4">
-          <div className="hidden sm:flex flex-col items-end">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Global Rank</span>
-            <span className="text-sm font-black font-mono">#14 / 8,402</span>
-          </div>
-          <div className="h-10 w-[1px] bg-border mx-2 hidden sm:block" />
+          <button 
+            onClick={() => fetchData(token)}
+            className="p-3 rounded-2xl bg-secondary hover:bg-secondary/80 transition-all"
+            title="Refresh Data"
+          >
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCcw className="w-5 h-5" />}
+          </button>
+          <div className="h-10 w-[1px] bg-border mx-2" />
           <button className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm">
             <GitPullRequest className="w-4 h-4" />
             Submit New Contribution
@@ -116,13 +217,13 @@ export default function ContributorDashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
         <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-all group">
           <div className="flex items-center justify-between mb-4">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">MSTS Score</span>
+            <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Contribution Score</span>
             <div className="p-2 bg-primary/10 rounded-xl text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
               <BarChart3 className="w-5 h-5" />
             </div>
           </div>
-          <div className="text-4xl font-black font-mono">{scoreInfo ? (Math.round(scoreInfo.finalScore! * 10) / 10) : "92"}/100</div>
-          <p className="text-xs text-muted-foreground mt-2 font-medium">Top 2% of ecosystem contributors</p>
+          <div className="text-4xl font-black font-mono">{finalScore}/100</div>
+          <p className="text-xs text-muted-foreground mt-2 font-medium">Reputation scaled by network influence</p>
         </div>
 
         <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-all group">
@@ -132,10 +233,10 @@ export default function ContributorDashboardPage() {
               <IconFlow />
             </div>
           </div>
-          <div className="text-4xl font-black font-mono">{scoreInfo ? scoreInfo.payout : 450} FLOW</div>
+          <div className="text-4xl font-black font-mono">{payout} FLOW</div>
           <div className="flex items-center gap-1.5 text-xs text-emerald-500 font-bold mt-2">
             <ArrowUpRight className="w-3 h-3" />
-            +$3,105.00 USD
+            Active Reward Pool
           </div>
         </div>
 
@@ -146,81 +247,162 @@ export default function ContributorDashboardPage() {
               <Timer className="w-5 h-5" />
             </div>
           </div>
-          <div className="text-4xl font-black font-mono">C5 · W4</div>
-          <p className="text-xs text-muted-foreground mt-2 font-medium">Payout in 12 days (Mar 31)</p>
+          <div className="text-4xl font-black font-mono">C1 · LIVE</div>
+          <p className="text-xs text-muted-foreground mt-2 font-medium">Snapshot in progress...</p>
         </div>
 
         <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-all group">
           <div className="flex items-center justify-between mb-4">
-            <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">GitHub PRs</span>
+            <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Tracked PRs</span>
             <div className="p-2 bg-purple-500/10 rounded-xl text-purple-500 group-hover:bg-purple-500 group-hover:text-white transition-colors">
               <Activity className="w-5 h-5" />
             </div>
           </div>
-          <div className="text-4xl font-black font-mono">18 Total</div>
-          <p className="text-xs text-muted-foreground mt-2 font-medium">4 eligible for this cycle</p>
+          <div className="text-4xl font-black font-mono">{prs.length} Total</div>
+          <p className="text-xs text-muted-foreground mt-2 font-medium">Synced from Git history</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Main Feed: PR Pipeline */}
         <div className="lg:col-span-2 space-y-8">
+          
+          {/* Repository Weights */}
+          <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
+            <div className="flex items-center gap-3 mb-8">
+                <Building2 className="w-6 h-6 text-primary" />
+                <h2 className="text-2xl font-black tracking-tight">Weight Configuration</h2>
+            </div>
+            
+            <div className="space-y-6">
+                <div className="flex gap-2">
+                    <input 
+                        type="text" 
+                        value={newRepo} 
+                        onChange={e => setNewRepo(e.target.value)} 
+                        placeholder="Add your repository (e.g. owner/repo)" 
+                        className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm font-mono text-foreground focus:outline-none focus:border-primary/50"
+                    />
+                    <button onClick={addRepo} className="bg-primary text-primary-foreground font-bold px-6 rounded-xl text-sm hover:opacity-90 transition-opacity">Add Repo</button>
+                </div>
+
+                {repos.length === 0 ? (
+                    <div className="p-6 bg-muted/20 border border-dashed border-border rounded-3xl text-center">
+                        <p className="text-sm text-muted-foreground italic">No repositories configured. Add one to start defining algorithm weights.</p>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        {repos.map(r => {
+                            const currentWeights = editWeights[r.name] || r.weights;
+                            const branchesStr = editBranches[r.name] !== undefined ? editBranches[r.name] : r.targetBranches.join(", ");
+                            return (
+                                <div key={r.name} className="p-6 bg-muted/10 border border-border rounded-3xl flex flex-col gap-6">
+                                    <div className="flex items-center justify-between border-b border-border pb-3">
+                                        <div className="flex items-center gap-2">
+                                            <Github className="w-4 h-4 text-muted-foreground" />
+                                            <span className="text-lg font-bold font-mono text-foreground">{r.name}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                        <div>
+                                            <h3 className="text-[10px] font-black text-muted-foreground mb-3 uppercase tracking-widest">Target Branches</h3>
+                                            <div className="flex gap-2">
+                                                <input 
+                                                    type="text" 
+                                                    value={branchesStr}
+                                                    onChange={e => setEditBranches(prev => ({...prev, [r.name]: e.target.value}))}
+                                                    placeholder="main, master"
+                                                    className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary/50"
+                                                />
+                                                <button onClick={() => updateTargetBranches(r.name)} className="bg-primary/20 text-primary font-bold px-4 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Set</button>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <h3 className="text-[10px] font-black text-muted-foreground mb-3 uppercase tracking-widest">Algo Pricing</h3>
+                                            <div className="grid grid-cols-2 gap-2 mb-4">
+                                                {Object.entries(currentWeights).map(([k, v]) => (
+                                                    <div key={k} className="flex items-center justify-between gap-2 p-2 bg-background border border-border rounded-xl">
+                                                        <label className="text-[9px] font-black text-muted-foreground uppercase">{k.substring(0,3)}</label>
+                                                        <input 
+                                                            type="number" 
+                                                            step="0.05"
+                                                            value={v as number}
+                                                            onChange={e => setEditWeights(prev => ({
+                                                                ...prev,
+                                                                [r.name]: { ...currentWeights, [k]: parseFloat(e.target.value) }
+                                                            }))}
+                                                            className="w-12 bg-transparent text-right text-xs font-mono font-bold focus:outline-none focus:text-primary"
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <button onClick={() => updateRepoWeights(r.name, r.weights)} className="w-full bg-primary/20 text-primary font-bold py-2.5 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Update Weights</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+          </div>
+
+          {/* Real PR Pipeline Tracking */}
           <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
             <div className="flex items-center justify-between mb-8">
               <div className="flex items-center gap-3">
                 <GitPullRequest className="w-6 h-6 text-primary" />
-                <h2 className="text-2xl font-black tracking-tight">PR Pipeline Tracking</h2>
+                <h2 className="text-2xl font-black tracking-tight">Algorithmic Valuation</h2>
               </div>
-              <div className="bg-muted/50 px-4 py-1.5 rounded-full text-xs font-bold text-muted-foreground">
-                Live Data Synchronized
+              <div className="bg-emerald-500/10 px-4 py-1.5 rounded-full text-[10px] font-black text-emerald-500 uppercase tracking-widest border border-emerald-500/20">
+                Verified On-Chain
               </div>
             </div>
 
             <div className="space-y-6">
-              {mockPRs.map((pr) => {
-                const currentIdx = statusOrder.indexOf(pr.status);
+              {prs.length === 0 ? (
+                  <div className="text-center py-12">
+                      <p className="text-muted-foreground italic">No recently merged PRs found for your account.</p>
+                  </div>
+              ) : prs.map((pr: any) => {
                 return (
                   <div key={pr.id} className="p-6 bg-background border border-border rounded-3xl hover:border-primary/30 hover:shadow-md transition-all group relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-primary/5 rounded-full -translate-y-1/2 translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity" />
-
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="px-2 py-0.5 bg-muted text-[10px] font-bold font-mono rounded text-muted-foreground">{pr.id}</span>
+                          <span className="px-2 py-0.5 bg-muted text-[10px] font-bold font-mono rounded text-muted-foreground">PR-{pr.id}</span>
                           <span className="text-sm font-bold text-primary italic font-serif">{pr.repo}</span>
                         </div>
                         <h4 className="text-lg font-black leading-tight group-hover:text-primary transition-colors">{pr.title}</h4>
                       </div>
                       <div className="flex items-center gap-4 shrink-0">
-                        {pr.mstsScore > 0 && (
-                          <div className="bg-primary/15 text-primary px-3 py-1 rounded-xl text-xs font-black font-mono flex items-center gap-1.5">
+                        <div className="bg-primary/15 text-primary px-3 py-1 rounded-xl text-xs font-black font-mono flex items-center gap-1.5">
                             <Award className="w-3.5 h-3.5" />
-                            {pr.mstsScore} pts
-                          </div>
-                        )}
+                            {pr.score} pts
+                        </div>
                         <span className="text-xs font-bold text-muted-foreground uppercase">{pr.date}</span>
-                        <ExternalLink className="w-4 h-4 text-muted-foreground hover:text-primary cursor-pointer transition-colors" />
+                        <a href={pr.link} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="w-4 h-4 text-muted-foreground hover:text-primary cursor-pointer transition-colors" />
+                        </a>
                       </div>
                     </div>
 
-                    {/* Step Visualizer */}
                     <div className="flex items-center gap-1">
                       {statusOrder.map((s, idx) => {
-                        const reached = idx <= currentIdx;
-                        const isCurrent = idx === currentIdx;
+                        const reached = true;
+                        const isCurrent = s === 'merged' || s === 'eligible';
                         return (
                           <React.Fragment key={s}>
-                            <div className={`flex items-center justify-center px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all ${reached
-                                ? isCurrent
+                            <div className={`flex items-center justify-center px-4 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest border transition-all ${isCurrent
                                   ? 'bg-primary text-primary-foreground border-primary shadow-glow-sm'
                                   : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-                                : 'bg-muted/30 text-muted-foreground/30 border-transparent'
                               }`}>
                               {s === 'payout' && <IconFlow />}
                               <span className="ml-1.5">{s}</span>
                             </div>
                             {idx < statusOrder.length - 1 && (
-                              <ArrowRight className={`w-3.5 h-3.5 shrink-0 ${reached ? 'text-primary' : 'text-muted/10'}`} />
+                              <ArrowRight className="w-3.5 h-3.5 shrink-0 text-primary" />
                             )}
                           </React.Fragment>
                         );
@@ -231,114 +413,52 @@ export default function ContributorDashboardPage() {
               })}
             </div>
           </div>
-
-          {/* Audit Archive Tracker */}
-          <div className="bg-[#050505] text-white border border-white/10 rounded-[2.5rem] p-8 shadow-2xl overflow-hidden relative group">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/20 blur-[100px] rounded-full -translate-y-1/2 translate-x-1/2 opacity-50" />
-            <div className="relative z-10">
-              <div className="flex items-center gap-3 mb-8">
-                <Archive className="w-6 h-6 text-primary" />
-                <h2 className="text-2xl font-black tracking-tight">IPFS Payout Records</h2>
-              </div>
-              <div className="space-y-4">
-                {[
-                  { cycle: "C4 (Jan 15)", cid: "bafy...7391", amount: "320 FLOW", hash: "0x892...e421" },
-                  { cycle: "C3 (Nov 30)", cid: "bafy...2844", amount: "510 FLOW", hash: "0x124...9012" },
-                ].map((audit, i) => (
-                  <div key={i} className="flex items-center justify-between p-5 bg-white/5 border border-white/10 rounded-3xl hover:bg-white/[0.08] transition-all cursor-pointer group/item">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center border border-white/10 group-hover/item:border-primary transition-all">
-                        <Globe className="w-6 h-6 opacity-40 group-hover/item:opacity-100 group-hover/item:text-primary transition-all" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-black">{audit.cycle}</div>
-                        <div className="text-xs font-mono text-white/40 truncate w-32 md:w-auto">{audit.cid}</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-black text-emerald-400 font-mono">{audit.amount}</div>
-                      <div className="text-[10px] font-bold text-white/20 font-mono uppercase truncate">{audit.hash}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <button className="w-full mt-6 py-4 rounded-2xl border border-white/10 text-xs font-black uppercase tracking-[0.2em] hover:bg-white hover:text-black transition-all">
-                Export Transparency Report
-              </button>
-            </div>
-          </div>
         </div>
 
-        {/* Sidebar: Earnings & Wallet */}
+        {/* Sidebar */}
         <div className="space-y-8">
           {/* Earnings Panel */}
           <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
             <div className="flex items-center gap-3 mb-6">
               <Wallet className="w-5 h-5 text-primary" />
-              <h2 className="text-xl font-bold font-heading">Financial insights</h2>
+              <h2 className="text-xl font-bold font-heading">Protocol Rewards</h2>
             </div>
-
             <div className="space-y-8">
               <div>
-                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-2">Cycle Pending</span>
+                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-2">Algorithm Value Generated</span>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black font-mono">{scoreInfo ? scoreInfo.payout : "450.00"}</span>
+                  <span className="text-3xl font-black font-mono">{payout}</span>
                   <span className="text-sm font-bold text-muted-foreground">FLOW</span>
                 </div>
               </div>
-
-              <div>
-                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-2">Total Lifetime Rewards</span>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black font-mono">2,140.00</span>
-                  <span className="text-sm font-bold text-muted-foreground">FLOW</span>
-                </div>
-              </div>
-
               <div className="pt-6 border-t border-border">
                 <div className="flex items-center justify-between mb-4">
-                  <span className="text-xs font-bold text-muted-foreground">Connected Wallet</span>
+                  <span className="text-xs font-bold text-muted-foreground">Network Status</span>
                   <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/10 text-emerald-500 rounded-full text-[10px] font-black">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    FLOW ACTIVE
+                    LIVE
                   </div>
-                </div>
-                <div className="p-4 bg-muted/30 border border-border rounded-2xl flex items-center justify-between group cursor-pointer hover:border-primary/40 transition-all">
-                  <div className="font-mono text-sm font-bold text-muted-foreground truncate w-32">0x7a3...e42f</div>
-                  <Search className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Cycle Roadmap Progress */}
-          <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
-            <div className="flex items-center gap-3 mb-8">
-              <Calendar className="w-5 h-5 text-primary" />
-              <h2 className="text-xl font-bold font-heading">Cycle #5 Progress</h2>
-            </div>
-
-            <div className="space-y-4">
-              {[1, 2, 3, 4, 5, 6].map((w) => (
-                <div key={w} className="flex items-center gap-4">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black border transition-all ${w < currentWeek
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : w === currentWeek
-                        ? 'bg-primary/20 text-primary border-primary animate-pulse'
-                        : 'bg-muted/30 text-muted-foreground border-border'
-                    }`}>
-                    {w < currentWeek ? <CheckCircle className="w-4 h-4" /> : `W${w}`}
-                  </div>
-                  <div className="flex-1">
-                    <div className="h-1 bg-muted rounded-full overflow-hidden">
-                      {w <= currentWeek && <div className="h-full bg-primary" style={{ width: w < currentWeek ? '100%' : '60%' }} />}
-                    </div>
-                  </div>
+          {/* New Algorithm Card */}
+          <div className="bg-[#050505] text-white rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-primary/20 blur-3xl rounded-full" />
+            <div className="relative z-10">
+                <h3 className="text-xl font-black mb-4">Valuation Logic</h3>
+                <p className="text-xs text-white/60 mb-6 leading-relaxed">
+                    Kinetic uses the <span className="text-primary font-bold">Final Valuation Algorithm</span> to price software artifacts based on log-scaled complexity, verified impact metrics, and network reputation.
+                </p>
+                <div className="space-y-3">
+                    {['Complexity Scaling', 'Reputation Multiplier', 'Anti-Spam Filter', 'DAO Influence'].map(item => (
+                        <div key={item} className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-white/50">
+                            <CheckCircle className="w-3 h-3 text-emerald-500" />
+                            {item}
+                        </div>
+                    ))}
                 </div>
-              ))}
-            </div>
-            <div className="mt-8 p-4 bg-primary/5 border border-primary/20 rounded-2xl text-[10px] font-bold text-primary text-center uppercase tracking-widest">
-              Snapshot Phase begins in 8 days
             </div>
           </div>
         </div>

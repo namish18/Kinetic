@@ -300,3 +300,5 @@ Always:
 
 ---
 
+contributors and organizations will login with their guthub
+the contributor will add their repos, they can define the weights for each repos based on it the bounty payout will be calculated/

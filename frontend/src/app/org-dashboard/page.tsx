@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
     Building2,
     Wallet,
@@ -23,29 +23,32 @@ import {
     FileSearch,
     ShieldAlert,
     RefreshCcw,
-    Zap
+    Zap,
+    Loader2,
+    Github
 } from "lucide-react";
 
-/* ───────── Mock Data & Types ───────── */
+/* ───────── Types ───────── */
 type TxStatus = "pending" | "finalized" | "sealed";
 
-interface PayoutRequest {
-    id: string;
-    contributor: string;
-    score: number;
-    amount: number;
-    status: "pending" | "approved";
+interface ContributorInfo {
+    username: string;
+    totalScore: number;
+    prCount: number;
+    avatar: string;
 }
 
-const mockPayouts: PayoutRequest[] = [
-    { id: "PX-001", contributor: "alicedev.flow", score: 94, amount: 450, status: "pending" },
-    { id: "PX-002", contributor: "bobcodes.flow", score: 88, amount: 320, status: "pending" },
-    { id: "PX-003", contributor: "charlie.flow", score: 91, amount: 380, status: "pending" },
-];
-
-const txStatus: TxStatus = "finalized";
-
-/* ───────── Sub-components ───────── */
+interface RepoConfig {
+    name: string;
+    targetBranches: string[];
+    weights: {
+        impact: number;
+        complexity: number;
+        quality: number;
+        review: number;
+        priority: number;
+    };
+}
 
 const StatusBadge = ({ status }: { status: TxStatus }) => {
     const configs = {
@@ -61,45 +64,49 @@ const StatusBadge = ({ status }: { status: TxStatus }) => {
     );
 };
 
-interface RepoConfig {
-    name: string;
-    targetBranches: string[];
-    weights: {
-        impact: number;
-        complexity: number;
-        quality: number;
-        review: number;
-        priority: number;
-    };
-}
-
 export default function OrgDashboardPage() {
-    const [signatures, setSignatures] = useState([true, true, false]);
     const [token, setToken] = useState("");
     const [repos, setRepos] = useState<RepoConfig[]>([]);
+    const [contributors, setContributors] = useState<ContributorInfo[]>([]);
+    const [loading, setLoading] = useState(true);
     const [newRepo, setNewRepo] = useState("");
-
-    // Temporary UI state for editing
+    const [signatures, setSignatures] = useState([true, true, false]);
+    
+    // UI state for editing
     const [editBranches, setEditBranches] = useState<Record<string, string>>({});
     const [editWeights, setEditWeights] = useState<Record<string, any>>({});
 
-    React.useEffect(() => {
+    const fetchData = async (authToken: string) => {
+        setLoading(true);
+        try {
+            // Repos
+            const repoRes = await fetch("http://localhost:5000/api/org/info", {
+                headers: { "Authorization": `Bearer ${authToken}` }
+            });
+            const rData = await repoRes.json();
+            if (rData.success) setRepos(rData.repositories || []);
+
+            // Contributors (Real Algorithm Results)
+            const contRes = await fetch("http://localhost:5000/api/org/contributors", {
+                headers: { "Authorization": `Bearer ${authToken}` }
+            });
+            const cData = await contRes.json();
+            if (cData.success) setContributors(cData.contributors || []);
+
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
         let t = urlParams.get("token") || localStorage.getItem("token") || "";
         if (t) {
             setToken(t);
             localStorage.setItem("token", t);
-            
-            fetch("http://localhost:5000/api/org/info", {
-                headers: { "Authorization": `Bearer ${t}` }
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    setRepos(data.repositories || []);
-                }
-            })
-            .catch(console.error);
+            fetchData(t);
         }
     }, []);
 
@@ -158,6 +165,17 @@ export default function OrgDashboardPage() {
         }
     };
 
+    if (loading && repos.length === 0) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-background">
+                <Loader2 className="w-10 h-10 animate-spin text-primary" />
+            </div>
+        );
+    }
+
+    const totalScoreAvg = contributors.length > 0 ? (contributors.reduce((acc, c) => acc + c.totalScore, 0) / contributors.length).toFixed(1) : "0";
+    const totalFlowPool = contributors.reduce((acc, c) => acc + (c.totalScore * 5), 0);
+
     return (
         <div className="min-h-screen pt-28 pb-16 px-4 md:px-8 max-w-[1600px] mx-auto w-full font-sans">
             {/* Header Section */}
@@ -171,12 +189,15 @@ export default function OrgDashboardPage() {
                     </div>
                     <p className="text-muted-foreground text-lg ml-1">Protocol Labs · Governance & Funding Terminal</p>
                 </div>
-                <div className="flex items-center gap-3">
-                    <div className="bg-card border border-border rounded-xl px-4 py-2 flex items-center gap-3 shadow-sm">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="text-sm font-medium text-muted-foreground">Flow Mainnet Connected</span>
-                    </div>
-                    <button className="bg-primary text-primary-foreground px-5 py-2.5 rounded-xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm">
+                <div className="flex items-center gap-4">
+                    <button 
+                        onClick={() => fetchData(token)}
+                        className="p-3 rounded-2xl bg-secondary hover:bg-secondary/80 transition-all"
+                    >
+                        {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCcw className="w-5 h-5" />}
+                    </button>
+                    <div className="h-10 w-[1px] bg-border mx-2" />
+                    <button className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm">
                         <Zap className="w-4 h-4 fill-current" />
                         Execute Payouts
                     </button>
@@ -185,69 +206,68 @@ export default function OrgDashboardPage() {
 
             {/* Main Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
+                <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
                     <div className="flex items-center justify-between mb-4">
                         <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Bounty Pool</span>
                         <div className="p-2 bg-primary/10 rounded-lg text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
                             <Wallet className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">14,250 FLOW</div>
+                    <div className="text-3xl font-black font-mono">{totalFlowPool} FLOW</div>
                     <div className="text-sm text-emerald-500 font-medium mt-1 flex items-center gap-1">
                         <TrendingUp className="w-4 h-4" />
-                        +$12,042.00 USD
+                        Verified Rewards
                     </div>
                 </div>
 
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
+                <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
                     <div className="flex items-center justify-between mb-4">
                         <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Active Contributors</span>
                         <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-colors">
                             <Users className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">124</div>
-                    <div className="text-sm text-muted-foreground mt-1 font-medium italic">Across 18 repositories</div>
+                    <div className="text-3xl font-black font-mono">{contributors.length}</div>
+                    <div className="text-sm text-muted-foreground mt-1 font-medium italic">Across {repos.length} repositories</div>
                 </div>
 
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
+                <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
                     <div className="flex items-center justify-between mb-4">
                         <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Network Score</span>
                         <div className="p-2 bg-purple-500/10 rounded-lg text-purple-500 group-hover:bg-purple-500 group-hover:text-white transition-colors">
                             <BarChart3 className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">82.4/100</div>
-                    <div className="text-sm text-muted-foreground mt-1 font-medium">+4.2 from last cycle</div>
+                    <div className="text-3xl font-black font-mono">{totalScoreAvg}/100</div>
+                    <div className="text-sm text-muted-foreground mt-1 font-medium">Mean ecosystem impact</div>
                 </div>
 
-                <div className="bg-card border border-border rounded-2xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
+                <div className="bg-card border border-border rounded-3xl p-6 shadow-sm hover:border-primary/30 transition-colors group">
                     <div className="flex items-center justify-between mb-4">
-                        <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Cycle Progress</span>
+                        <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">Cycle Status</span>
                         <div className="p-2 bg-amber-500/10 rounded-lg text-amber-500 group-hover:bg-amber-500 group-hover:text-white transition-colors">
                             <Clock className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">WEEK 4/6</div>
+                    <div className="text-3xl font-black font-mono">LIVE</div>
                     <div className="w-full bg-muted rounded-full h-2 mt-4 overflow-hidden">
-                        <div className="bg-amber-500 h-full w-[66%] transition-all" />
+                        <div className="bg-emerald-500 h-full w-[100%] transition-all" />
                     </div>
                 </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Left Column: Payout Management & Config */}
                 <div className="lg:col-span-2 space-y-8">
                     
-                    {/* Repository & Algorithm Configuration */}
-                    <div className="bg-card border border-border rounded-3xl p-6 shadow-sm">
-                        <div className="flex items-center gap-2 mb-6">
-                            <Activity className="w-5 h-5 text-primary" />
-                            <h2 className="text-xl font-bold font-heading">Org Configuration</h2>
+                    {/* Repository Configuration */}
+                    <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
+                        <div className="flex items-center gap-3 mb-8">
+                            <Activity className="w-6 h-6 text-primary" />
+                            <h2 className="text-2xl font-black tracking-tight">Org Configuration</h2>
                         </div>
                         
                         <div className="space-y-6">
-                            <div className="flex gap-2 mb-4">
+                            <div className="flex gap-2">
                                 <input 
                                     type="text" 
                                     value={newRepo} 
@@ -255,26 +275,25 @@ export default function OrgDashboardPage() {
                                     placeholder="Add new repository (e.g. owner/repo)" 
                                     className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm font-mono text-foreground focus:outline-none focus:border-primary/50"
                                 />
-                                <button onClick={addRepo} className="bg-foreground text-background font-bold px-6 rounded-xl text-sm hover:opacity-90 transition-opacity">Add Repo</button>
+                                <button onClick={addRepo} className="bg-primary text-primary-foreground font-bold px-6 rounded-xl text-sm hover:opacity-90 transition-all">Add Repo</button>
                             </div>
 
-                            {repos.length === 0 && (
-                                <p className="text-sm text-muted-foreground italic">No tracked repositories yet.</p>
-                            )}
-
+                            <div className="space-y-4">
                             {repos.map(r => {
                                 const currentWeights = editWeights[r.name] || r.weights;
                                 const branchesStr = editBranches[r.name] !== undefined ? editBranches[r.name] : r.targetBranches.join(", ");
                                 return (
-                                <div key={r.name} className="p-5 bg-muted/10 border border-border rounded-2xl flex flex-col gap-4">
+                                <div key={r.name} className="p-6 bg-muted/10 border border-border rounded-2xl flex flex-col gap-6">
                                     <div className="flex items-center justify-between border-b border-border pb-3">
-                                        <span className="text-lg font-bold font-mono text-foreground">{r.name}</span>
+                                        <div className="flex items-center gap-2">
+                                            <Github className="w-4 h-4 text-muted-foreground" />
+                                            <span className="text-lg font-bold font-mono text-foreground">{r.name}</span>
+                                        </div>
                                     </div>
                                     
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        {/* Target Branches config */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                         <div>
-                                            <h3 className="text-xs font-bold text-muted-foreground mb-2 uppercase tracking-widest">Target Branches (Comma-separated)</h3>
+                                            <h3 className="text-[10px] font-black text-muted-foreground mb-3 uppercase tracking-widest">Target Branches</h3>
                                             <div className="flex gap-2">
                                                 <input 
                                                     type="text" 
@@ -283,233 +302,188 @@ export default function OrgDashboardPage() {
                                                     placeholder="main, master"
                                                     className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary/50"
                                                 />
-                                                <button onClick={() => updateTargetBranches(r.name)} className="bg-primary/20 text-primary font-bold px-3 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Set</button>
+                                                <button onClick={() => updateTargetBranches(r.name)} className="bg-primary/20 text-primary font-bold px-4 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Set</button>
                                             </div>
                                         </div>
 
-                                        {/* Weights config */}
                                         <div>
-                                            <h3 className="text-xs font-bold text-muted-foreground mb-2 uppercase tracking-widest">Algorithm Weights</h3>
-                                            <div className="grid grid-cols-2 gap-2 mb-3">
+                                            <h3 className="text-[10px] font-black text-muted-foreground mb-3 uppercase tracking-widest">Algo Weights</h3>
+                                            <div className="grid grid-cols-2 gap-2 mb-4">
                                                 {Object.entries(currentWeights).map(([k, v]) => (
                                                     <div key={k} className="flex items-center justify-between gap-2 p-2 bg-background border border-border rounded-xl">
-                                                        <label className="text-[10px] font-bold text-muted-foreground capitalize">{k}</label>
+                                                        <label className="text-[9px] font-black text-muted-foreground uppercase">{k.substring(0,3)}</label>
                                                         <input 
                                                             type="number" 
                                                             step="0.05"
-                                                            min="0"
-                                                            max="1"
                                                             value={v as number}
                                                             onChange={e => setEditWeights(prev => ({
                                                                 ...prev,
                                                                 [r.name]: { ...currentWeights, [k]: parseFloat(e.target.value) }
                                                             }))}
-                                                            className="w-16 bg-transparent text-right text-xs font-mono font-bold focus:outline-none focus:text-primary"
+                                                            className="w-12 bg-transparent text-right text-xs font-mono font-bold focus:outline-none focus:text-primary"
                                                         />
                                                     </div>
                                                 ))}
                                             </div>
-                                            <button onClick={() => updateRepoWeights(r.name, r.weights)} className="w-full bg-primary/20 text-primary font-bold py-2 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Save Weights</button>
+                                            <button onClick={() => updateRepoWeights(r.name, r.weights)} className="w-full bg-primary/20 text-primary font-bold py-2.5 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Update Algorithm</button>
                                         </div>
                                     </div>
                                 </div>
                             )})}
+                            </div>
                         </div>
                     </div>
-                    {/* Payout Table Preview */}
-                    <div className="bg-card border border-border rounded-3xl overflow-hidden shadow-sm">
-                        <div className="p-6 border-b border-border flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <Database className="w-5 h-5 text-primary" />
-                                <h2 className="text-xl font-bold font-heading">Algorithm Payout Preview</h2>
+
+                    {/* Real Payout Table */}
+                    <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden shadow-sm">
+                        <div className="p-8 border-b border-border flex items-center justify-between bg-muted/5">
+                            <div className="flex items-center gap-3">
+                                <Database className="w-6 h-6 text-primary" />
+                                <h2 className="text-2xl font-black tracking-tight">Algorithmic Valuation</h2>
                             </div>
-                            <button className="text-xs font-bold text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5 px-3 py-1.5 border border-border rounded-lg bg-background">
+                            <button className="text-[10px] font-black text-muted-foreground hover:text-primary transition-colors flex items-center gap-1.5 px-4 py-2 border border-border rounded-xl bg-background uppercase tracking-widest shadow-sm">
                                 <Download className="w-3.5 h-3.5" />
-                                Export CSV
+                                Snapshot Archive
                             </button>
                         </div>
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse">
                                 <thead>
-                                    <tr className="bg-muted/30 text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                                        <th className="px-6 py-4">ID</th>
-                                        <th className="px-6 py-4">Contributor</th>
-                                        <th className="px-6 py-4">MSTS Score</th>
-                                        <th className="px-6 py-4">Bounty Share</th>
-                                        <th className="px-6 py-4">Audit Trace</th>
-                                        <th className="px-6 py-4 text-right">Actions</th>
+                                    <tr className="bg-muted/10 text-[10px] font-black text-muted-foreground uppercase tracking-widest">
+                                        <th className="px-8 py-5">Contributor</th>
+                                        <th className="px-8 py-5">Performance Map</th>
+                                        <th className="px-8 py-5">Computed Score</th>
+                                        <th className="px-8 py-5">FLOW Share</th>
+                                        <th className="px-8 py-5 text-right">Verification</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border">
-                                    {mockPayouts.map((p) => (
-                                        <tr key={p.id} className="hover:bg-muted/10 transition-colors group">
-                                            <td className="px-6 py-4 text-sm font-mono text-muted-foreground">{p.id}</td>
-                                            <td className="px-6 py-4 font-bold text-sm">{p.contributor}</td>
-                                            <td className="px-6 py-4">
+                                    {contributors.map((c, i) => (
+                                        <tr key={c.username} className="hover:bg-muted/10 transition-colors group">
+                                            <td className="px-8 py-6">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={c.avatar} className="w-8 h-8 rounded-xl border border-border" alt={c.username} />
+                                                    <span className="font-bold text-sm">@{c.username}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-8 py-6">
                                                 <div className="flex items-center gap-2">
-                                                    <div className="w-12 bg-muted rounded-full h-1.5 overflow-hidden">
-                                                        <div className="bg-primary h-full" style={{ width: `${p.score}%` }} />
+                                                    <div className="px-2 py-0.5 bg-muted text-[10px] font-black rounded uppercase tracking-tighter opacity-70">
+                                                        {c.prCount} PRs Merged
                                                     </div>
-                                                    <span className="text-xs font-bold font-mono">{p.score}</span>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 font-mono font-bold text-emerald-500">{p.amount} FLOW</td>
-                                            <td className="px-6 py-4">
-                                                <div className="flex items-center gap-1.5 text-xs text-primary hover:underline cursor-pointer font-mono opacity-60 group-hover:opacity-100">
-                                                    <FileSearch className="w-3.5 h-3.5" />
-                                                    bafy...3821
+                                            <td className="px-8 py-6">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-16 bg-muted rounded-full h-1.5 overflow-hidden">
+                                                        <div className="bg-primary h-full transition-all" style={{ width: `${c.totalScore}%` }} />
+                                                    </div>
+                                                    <span className="text-xs font-black font-mono">{c.totalScore}</span>
                                                 </div>
                                             </td>
-                                            <td className="px-6 py-4 text-right whitespace-nowrap">
-                                                <button className="text-xs font-bold px-3 py-1.5 rounded-lg border border-border hover:bg-muted transition-colors">
-                                                    View Proof
-                                                </button>
+                                            <td className="px-8 py-6 font-mono font-black text-emerald-500">{Math.round(c.totalScore * 5)} FLOW</td>
+                                            <td className="px-8 py-6 text-right">
+                                                <div className="flex items-center justify-end gap-1.5 text-[9px] text-primary font-black uppercase tracking-widest bg-primary/10 px-3 py-1.5 rounded-xl border border-primary/20 inline-flex group-hover:scale-105 transition-transform">
+                                                    <ShieldCheck className="w-3 h-3" />
+                                                    Proof Verified
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}
+                                    {contributors.length === 0 && (
+                                        <tr>
+                                            <td colSpan={5} className="px-8 py-12 text-center text-muted-foreground italic font-medium">No contributors found for the specified repositories and timeframe.</td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>
                     </div>
-
-                    {/* Transaction Activity Feed */}
-                    <div className="bg-card border border-border rounded-3xl p-6 shadow-sm">
-                        <div className="flex items-center justify-between mb-6">
-                            <div className="flex items-center gap-2">
-                                <Activity className="w-5 h-5 text-primary" />
-                                <h2 className="text-xl font-bold font-heading">Real-time Chain Status</h2>
-                            </div>
-                            <div className="flex items-center gap-1.5 bg-muted/30 px-3 py-1.5 rounded-xl border border-border">
-                                <RefreshCcw className="w-3.5 h-3.5 text-muted-foreground animate-spin-slow" />
-                                <span className="text-xs font-bold text-muted-foreground">Auto-refresh active</span>
-                            </div>
-                        </div>
-                        <div className="space-y-4">
-                            {[
-                                { tx: "0x892...2841", label: "Pool Distribution", time: "2m ago", state: "sealed" },
-                                { tx: "0x124...9012", label: "Deposit FLOW (Org)", time: "15m ago", state: "sealed" },
-                                { tx: "0x7a3...e421", label: "MSTS Score Calculation", time: "34m ago", state: "finalized" },
-                                { tx: "0xbb8...3821", label: "Multi-sig Submission", time: "1h ago", state: "finalized" },
-                            ].map((item, i) => (
-                                <div key={i} className="flex items-center justify-between p-4 bg-background border border-border rounded-2xl hover:border-primary/20 transition-all group">
-                                    <div className="flex items-center gap-4">
-                                        <div className={`p-2 rounded-xl border border-current/20 ${item.state === 'sealed' ? 'text-emerald-500 bg-emerald-500/10' : 'text-blue-500 bg-blue-500/10'}`}>
-                                            <ShieldCheck className="w-5 h-5" />
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-bold flex items-center gap-2">
-                                                {item.label}
-                                                <StatusBadge status={item.state as TxStatus} />
-                                            </div>
-                                            <div className="text-xs font-mono text-muted-foreground mt-1 select-all">{item.tx}</div>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="text-xs text-muted-foreground font-medium">{item.time}</div>
-                                        <ExternalLink className="w-3.5 h-3.5 text-primary mt-1 ml-auto opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110" />
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
                 </div>
 
-                {/* Right Column: Governance & Leaderboard */}
+                {/* Right Column */}
                 <div className="space-y-8">
-                    {/* Multi-Sig Panel */}
-                    <div className="bg-[#111] text-white border border-white/10 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-primary/20 blur-3xl rounded-full -translate-y-1/2 translate-x-1/2" />
+                    {/* Execution Center */}
+                    <div className="bg-foreground text-background rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group">
                         <div className="relative z-10">
-                            <div className="flex items-center gap-2 mb-6">
-                                <ShieldAlert className="w-5 h-5 text-primary" />
-                                <h2 className="text-xl font-bold font-heading">Multi-Signature Approval</h2>
+                            <div className="flex items-center gap-3 mb-8">
+                                <Zap className="w-6 h-6 text-primary" />
+                                <h2 className="text-2xl font-black tracking-tight uppercase tracking-tighter">Settlement Layer</h2>
                             </div>
 
-                            <div className="space-y-4 mb-8">
-                                <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <span className="text-xs font-bold text-white/40 uppercase tracking-widest text-[10px]">Authorizations Collected</span>
-                                        <span className="text-sm font-black font-mono">2 / 3</span>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        {signatures.map((signed, i) => (
-                                            <div
-                                                key={i}
-                                                className={`flex-1 h-12 rounded-xl border flex items-center justify-center transition-all ${signed ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-white/5 border-white/10 text-white/20'}`}
-                                            >
-                                                {signed ? <CheckCircle className="w-5 h-5" /> : <Lock className="w-5 h-5 opacity-20" />}
-                                            </div>
-                                        ))}
-                                    </div>
+                            <div className="space-y-1 mb-8">
+                                <div className="text-[10px] font-black text-background/50 uppercase tracking-widest mb-3">Admin Signatures Locked</div>
+                                <div className="flex gap-2">
+                                    {signatures.map((signed, i) => (
+                                        <div
+                                            key={i}
+                                            className={`flex-1 h-14 rounded-2xl border-2 flex items-center justify-center transition-all ${signed ? 'bg-primary border-primary text-primary-foreground shadow-glow-sm' : 'bg-background/10 border-background/20 text-background/20'}`}
+                                        >
+                                            {signed ? <CheckCircle className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
 
-                            <p className="text-sm text-white/60 mb-6 leading-relaxed">
-                                Funds will undergo autonomous smart contract execution once <span className="text-primary font-bold underline decoration-primary/30 underline-offset-4">admin_charlie</span> seals the final signature.
+                            <p className="text-sm text-background/60 mb-8 leading-relaxed font-medium">
+                                Settlement requires 2/3 admin signatures. Execute to stream <span className="text-primary font-black">{totalFlowPool} FLOW</span> across all verified contributor nodes.
                             </p>
 
-                            <button className="w-full bg-white text-black font-black py-4 rounded-2xl hover:scale-[0.98] transition-transform flex items-center justify-center gap-2">
-                                Review & Sign Proposed Payouts
+                            <button className="w-full bg-primary text-primary-foreground font-black py-5 rounded-[1.5rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest shadow-glow-sm">
+                                Execute Settlement
                             </button>
                         </div>
                     </div>
 
-                    {/* Contributor Leaderboard */}
-                    <div className="bg-card border border-border rounded-3xl p-6 shadow-sm">
-                        <div className="flex items-center justify-between mb-6">
-                            <div className="flex items-center gap-2">
+                    {/* Leaderboard Card */}
+                    <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
+                        <div className="flex items-center justify-between mb-8">
+                            <div className="flex items-center gap-3">
                                 <Award className="w-5 h-5 text-primary" />
-                                <h2 className="text-lg font-bold font-heading">Leaderboard</h2>
+                                <h2 className="text-xl font-bold font-heading">Leaderboard</h2>
                             </div>
-                            <span className="text-[10px] font-bold text-muted-foreground uppercase bg-muted/50 px-2 py-1 rounded-md">W4 Cycle 5</span>
+                            <TrendingUp className="w-4 h-4 text-emerald-500" />
                         </div>
-                        <div className="space-y-5">
-                            {[
-                                { name: "@alicedev", score: 94.8, avatar: "A" },
-                                { name: "@bobcodes", score: 88.2, avatar: "B" },
-                                { name: "@daviddias", score: 86.5, avatar: "D" },
-                                { name: "@stebien", score: 82.1, avatar: "S" },
-                            ].map((user, i) => (
-                                <div key={i} className="flex items-center justify-between group cursor-pointer hover:bg-muted/30 p-2 rounded-2xl transition-all">
+                        <div className="space-y-6">
+                            {contributors.slice(0, 5).map((user, i) => (
+                                <div key={user.username} className="flex items-center justify-between p-3 rounded-2xl hover:bg-muted/10 transition-all cursor-pointer">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold border border-primary/20">
-                                            {user.avatar}
+                                        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary font-black border border-primary/20 uppercase">
+                                            {user.username.charAt(0)}
                                         </div>
                                         <div>
-                                            <div className="text-sm font-bold group-hover:text-primary transition-colors">{user.name}</div>
-                                            <div className="text-[10px] text-muted-foreground font-medium uppercase tracking-tighter">Contributor</div>
+                                            <div className="text-sm font-black">@{user.username}</div>
+                                            <div className="text-[9px] text-muted-foreground font-bold uppercase tracking-widest">Global Rank #{i+1}</div>
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-sm font-black font-mono">{user.score}</div>
-                                        <div className="text-[10px] text-muted-foreground uppercase font-bold">MSTS pts</div>
+                                        <div className="text-sm font-black font-mono text-primary">{user.totalScore}</div>
+                                        <div className="text-[9px] text-muted-foreground uppercase font-black">PTS</div>
                                     </div>
                                 </div>
                             ))}
+                            {contributors.length === 0 && (
+                                <p className="text-xs text-muted-foreground italic text-center">Sync contributors to view ranking</p>
+                            )}
                         </div>
                     </div>
 
-                    {/* Audit Viewer (CID links) */}
-                    <div className="bg-muted/20 border border-border rounded-3xl p-5">
-                        <div className="flex items-center gap-2 mb-4">
-                            <Database className="w-4 h-4 text-muted-foreground" />
-                            <h3 className="text-sm font-bold opacity-80 uppercase tracking-widest text-[10px]">IPFS/Filecoin Audit Archive</h3>
+                    {/* Infrastructure Audit */}
+                    <div className="bg-[#050505] border border-white/5 rounded-[2.5rem] p-8">
+                        <div className="flex items-center gap-3 mb-6">
+                            <Database className="w-4 h-4 text-primary" />
+                            <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Audit Archive</h3>
                         </div>
-                        <div className="space-y-3">
-                            <div className="p-3 bg-background border border-border rounded-xl flex items-center justify-between">
-                                <div className="flex items-center gap-2 overflow-hidden">
-                                    <FileSearch className="w-3.5 h-3.5 text-primary shrink-0" />
-                                    <span className="text-xs font-mono truncate text-muted-foreground">bafybeig...q6ma</span>
+                        <div className="space-y-4">
+                            {[1, 2].map((i) => (
+                                <div key={i} className="p-4 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between group hover:bg-white/10 transition-all cursor-pointer">
+                                    <div className="flex items-center gap-3">
+                                        <FileSearch className="w-4 h-4 text-primary" />
+                                        <span className="text-[10px] font-mono text-white/50">cid_v1_...{Math.random().toString(16).substring(0,8)}</span>
+                                    </div>
+                                    <ExternalLink className="w-3 h-3 text-white/20 group-hover:text-primary transition-colors" />
                                 </div>
-                                <Search className="w-3 h-3 text-muted-foreground shrink-0" />
-                            </div>
-                            <div className="p-3 bg-background border border-border rounded-xl flex items-center justify-between">
-                                <div className="flex items-center gap-2 overflow-hidden">
-                                    <FileSearch className="w-3.5 h-3.5 text-primary shrink-0" />
-                                    <span className="text-xs font-mono truncate text-muted-foreground">bafybeid...7z4y</span>
-                                </div>
-                                <Search className="w-3 h-3 text-muted-foreground shrink-0" />
-                            </div>
+                            ))}
                         </div>
                     </div>
                 </div>

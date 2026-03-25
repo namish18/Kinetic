@@ -50,7 +50,7 @@ router.post('/github', async (req, res) => {
 
             console.log(`Webhook: Target branch matched! Calculating payout algorithm using org weights...`);
 
-            // Use the repository-specific weights passed down to MSTS or related logic
+            // Use the repository-specific weights passed down to Valuation Score or related logic
             const { impact, complexity, quality, review, priority } = repoConfig.weights;
 
             // Calculate payout based on true PR dimensions instead of arbitrary lookup

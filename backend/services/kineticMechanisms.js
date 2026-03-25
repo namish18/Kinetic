@@ -3,7 +3,7 @@
  * Implements: Proof-of-Build (CI/CD Verification) & Quadratic Funding
  */
 
-import { computeMSTS } from './contributionService.js';
+import { computeContributionScore } from './contributionService.js';
 
 // ─────────────────────────────────────────────────────────────
 // Mechanism 1: Proof-of-Build (CI/CD Verification)
