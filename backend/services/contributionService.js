@@ -9,7 +9,6 @@ import User from '../models/User.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
-const DAO_INFLUENCE_MU = 0.3;
 
 /**
  * Derives normalized inputs for the algorithm from a GitHub PR object
@@ -73,17 +72,12 @@ export function calculatePRScore(metrics, weights, context = {}) {
     let repMult = 1 + (REPUTATION_INFLUENCE_LAMBDA * Math.min(1.0, R_norm));
     repMult = Math.min(1.5, repMult); 
 
-    // Step 5: DAO Score
-    const daoScore = context.daoScore !== undefined ? context.daoScore : 0.5; 
-    let daoAdj = 1 + DAO_INFLUENCE_MU * (daoScore - 0.5);
-    daoAdj = Math.max(0.8, Math.min(1.2, daoAdj));
-
     // Step 6: Final Score
-    const finalScore = baseScore * repMult * daoAdj;
+    const finalScore = baseScore * repMult;
 
     return {
         score: finalScore,
-        details: { metrics, weights: w, baseScore, repMult, daoAdj }
+        details: { metrics, weights: w, baseScore, repMult }
     };
 }
 

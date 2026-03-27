@@ -299,7 +299,7 @@ export default function ContributorDashboardPage() {
                     Kinetic uses the <span className="text-primary font-bold">Final Valuation Algorithm</span> to price software artifacts based on log-scaled complexity, verified impact metrics, and network reputation.
                 </p>
                 <div className="space-y-3">
-                    {['Complexity Scaling', 'Reputation Multiplier', 'Anti-Spam Filter', 'DAO Influence'].map(item => (
+                    {['Complexity Scaling', 'Reputation Multiplier', 'Anti-Spam Filter'].map(item => (
                         <div key={item} className="flex items-center gap-3 text-[10px] font-black uppercase tracking-widest text-white/50">
                             <CheckCircle className="w-3 h-3 text-emerald-500" />
                             {item}
