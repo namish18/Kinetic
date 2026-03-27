@@ -96,8 +96,45 @@ router.post('/repositories', authenticateToken, async (req, res) => {
 });
 
 /**
+ * GET /api/org/repositories/:repoId/branches
+ * Fetch all branches for a repository from GitHub API
+ */
+router.get('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
+    try {
+        const repoName = decodeURIComponent(req.params.repoId);
+        const pat = process.env.GITHUB_PAT;
+
+        const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Kinetic-App' };
+        if (pat) headers['Authorization'] = `Bearer ${pat}`;
+
+        let allBranches = [];
+        let page = 1;
+        while (true) {
+            const ghRes = await fetch(
+                `https://api.github.com/repos/${repoName}/branches?per_page=100&page=${page}`,
+                { headers }
+            );
+            if (!ghRes.ok) {
+                const err = await ghRes.json().catch(() => ({}));
+                return res.status(ghRes.status).json({ error: err.message || 'GitHub API error' });
+            }
+            const data = await ghRes.json();
+            if (!Array.isArray(data) || data.length === 0) break;
+            allBranches = allBranches.concat(data.map(b => b.name));
+            if (data.length < 100) break;
+            page++;
+        }
+
+        res.json({ success: true, branches: allBranches });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error', message: error.message });
+    }
+});
+
+/**
  * PUT /api/org/repositories/:repoId/branches
  */
+
 router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
     try {
         const repoName = decodeURIComponent(req.params.repoId);
