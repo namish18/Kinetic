@@ -1,0 +1,43 @@
+{
+	"contracts": {
+		"KineticPayout": {
+			"source": "./cadence/contracts/KineticPayout.cdc",
+			"aliases": {
+				"testnet": "0xad4936d3ee4b3b32"
+			}
+		}
+	},
+	"networks": {
+		"emulator": "127.0.0.1:3569",
+		"mainnet": "access.mainnet.nodes.onflow.org:9000",
+		"mainnet-fork": {
+			"host": "127.0.0.1:3569",
+			"fork": "mainnet"
+		},
+		"testing": "127.0.0.1:3569",
+		"testnet": "access.devnet.nodes.onflow.org:9000"
+	},
+	"accounts": {
+		"emulator-account": {
+			"address": "f8d6e0586b0a20c7",
+			"key": {
+				"type": "file",
+				"location": "emulator-account.pkey"
+			}
+		},
+		"testnet-account": {
+			"address": "ad4936d3ee4b3b32",
+			"key": {
+				"type": "file",
+				"location": "testnet-account.pkey"
+			}
+		}
+	},
+	"deployments": {
+		"testnet": {
+			"testnet-account": [
+				"KineticPayout"
+			]
+		}
+	}
+}
