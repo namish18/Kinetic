@@ -29,14 +29,8 @@ router.get(
     '/github/callback',
     passport.authenticate('github', { failureRedirect: '/?error=auth_failed' }),
     async (req, res) => {
-        // Update the user's role if it was set in the session (e.g., during signup)
-        let finalRole = req.user.role || 'contributor';
-        
-        if (req.session.role && req.user.role !== req.session.role) {
-            finalRole = req.session.role;
-            await User.findByIdAndUpdate(req.user._id, { role: finalRole });
-            console.log(`🔄 User @${req.user.github} upgraded to ${finalRole}`);
-        }
+        // Role is already correctly set on req.user by the Passport strategy
+        const finalRole = req.user.role || 'contributor';
 
         const token = jwt.sign(
             { id: req.user._id, github: req.user.github, did: req.user.did, role: finalRole },
@@ -46,9 +40,12 @@ router.get(
 
         const frontendURL = process.env.FRONTEND_URL || 'http://localhost:3000';
         const redirectPath = finalRole === 'organization' ? '/org-dashboard' : '/dashboard';
+
+        console.log(`🔀 Redirecting @${req.user.github} (${finalRole}) → ${redirectPath}`);
         res.redirect(`${frontendURL}${redirectPath}?token=${token}`);
     }
 );
+
 
 // ─────────────────────────────────────────────────────────────
 //  Profile
