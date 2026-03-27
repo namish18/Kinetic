@@ -51,8 +51,8 @@ router.get('/all', async (req, res) => {
  */
 router.get('/contributors', authenticateToken, async (req, res) => {
     try {
-        const contributors = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
-        res.json({ success: true, contributors });
+        const { contributors, recentEvents } = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
+        res.json({ success: true, contributors, recentEvents });
     } catch (error) {
         res.status(500).json({ error: 'Server error', message: error.message });
     }
