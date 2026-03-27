@@ -25,7 +25,8 @@ import {
     RefreshCcw,
     Zap,
     Loader2,
-    Github
+    Github,
+    LogOut,
 } from "lucide-react";
 
 /* ───────── Types ───────── */
@@ -85,6 +86,11 @@ export default function OrgDashboardPage() {
     // UI state for editing
     const [editBranches, setEditBranches] = useState<Record<string, string>>({});
     const [editWeights, setEditWeights] = useState<Record<string, any>>({});
+
+    const handleLogout = () => {
+        localStorage.removeItem("token");
+        window.location.href = "/login";
+    };
 
     const fetchData = async (authToken: string) => {
         setLoading(true);
@@ -215,6 +221,13 @@ export default function OrgDashboardPage() {
                     <button className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm">
                         <Zap className="w-4 h-4 fill-current" />
                         Execute Payouts
+                    </button>
+                    <button
+                        onClick={handleLogout}
+                        title="Logout"
+                        className="p-3 rounded-2xl bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all border border-destructive/20"
+                    >
+                        <LogOut className="w-5 h-5" />
                     </button>
                 </div>
             </div>
@@ -348,6 +361,92 @@ export default function OrgDashboardPage() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Individual Repo Stats */}
+                    {repos.length > 0 && (
+                        <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
+                            <div className="flex items-center gap-3 mb-8">
+                                <BarChart3 className="w-6 h-6 text-primary" />
+                                <h2 className="text-2xl font-black tracking-tight">Repository Stats</h2>
+                                <span className="ml-auto text-[10px] font-black text-muted-foreground uppercase tracking-widest bg-muted/30 px-3 py-1 rounded-full border border-border">{repos.length} Repos</span>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {repos.map(r => {
+                                    // Compute per-repo contributor count and PR count from contributors data
+                                    const repoContributors = contributors.filter(c =>
+                                        recentEvents.some(e => e.repo === r.name && e.username === c.username)
+                                    );
+                                    const repoPRs = recentEvents.filter(e => e.repo === r.name);
+                                    const repoAvgScore = repoPRs.length > 0
+                                        ? (repoPRs.reduce((sum, e) => sum + e.score, 0) / repoPRs.length).toFixed(1)
+                                        : "—";
+                                    const weightEntries = Object.entries(r.weights);
+                                    const totalWeight = weightEntries.reduce((s, [, v]) => s + (v as number), 0) || 1;
+                                    return (
+                                        <div key={r.name} className="p-5 bg-muted/10 border border-border rounded-3xl flex flex-col gap-4 hover:border-primary/30 transition-all group">
+                                            {/* Repo header */}
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <Github className="w-4 h-4 text-muted-foreground" />
+                                                    <span className="text-sm font-black font-mono text-foreground truncate max-w-[140px]" title={r.name}>{r.name}</span>
+                                                </div>
+                                                <a href={`https://github.com/${r.name}`} target="_blank" rel="noopener noreferrer">
+                                                    <ExternalLink className="w-3.5 h-3.5 text-muted-foreground hover:text-primary transition-colors" />
+                                                </a>
+                                            </div>
+
+                                            {/* Quick stats row */}
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <div className="p-2 bg-background border border-border rounded-xl text-center">
+                                                    <div className="text-lg font-black font-mono text-primary">{repoContributors.length || contributors.length}</div>
+                                                    <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mt-0.5">Devs</div>
+                                                </div>
+                                                <div className="p-2 bg-background border border-border rounded-xl text-center">
+                                                    <div className="text-lg font-black font-mono">{repoPRs.length}</div>
+                                                    <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mt-0.5">PRs</div>
+                                                </div>
+                                                <div className="p-2 bg-background border border-border rounded-xl text-center">
+                                                    <div className="text-lg font-black font-mono text-emerald-500">{repoAvgScore}</div>
+                                                    <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mt-0.5">Avg Pts</div>
+                                                </div>
+                                            </div>
+
+                                            {/* Target branches */}
+                                            <div>
+                                                <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2">Tracked Branches</div>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {r.targetBranches.length > 0 ? r.targetBranches.map(b => (
+                                                        <span key={b} className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-lg text-[10px] font-bold font-mono">{b}</span>
+                                                    )) : (
+                                                        <span className="text-[10px] text-muted-foreground italic">No branches set</span>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Weight bars */}
+                                            <div>
+                                                <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mb-2">Algo Weights</div>
+                                                <div className="space-y-1.5">
+                                                    {weightEntries.map(([key, val]) => (
+                                                        <div key={key} className="flex items-center gap-2">
+                                                            <span className="text-[9px] font-black text-muted-foreground uppercase w-10 shrink-0">{key.substring(0,3)}</span>
+                                                            <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
+                                                                <div
+                                                                    className="bg-primary h-full rounded-full transition-all"
+                                                                    style={{ width: `${((val as number) / totalWeight) * 100}%` }}
+                                                                />
+                                                            </div>
+                                                            <span className="text-[9px] font-black font-mono text-muted-foreground w-6 text-right">{(val as number).toFixed(2)}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Real Payout Table */}
                     <div className="bg-card border border-border rounded-[2.5rem] overflow-hidden shadow-sm">

@@ -2,29 +2,19 @@
 import React, { useState, useEffect } from "react";
 import {
   GitPullRequest,
-  Clock,
   CheckCircle,
   Wallet,
-  TrendingUp,
-  Calendar,
   ExternalLink,
-  Plus,
   ArrowUpRight,
   BarChart3,
   Activity,
   Timer,
-  ChevronRight,
-  FileText,
-  Search,
   Award,
   Zap,
-  Globe,
-  Archive,
   ArrowRight,
-  Building2,
   RefreshCcw,
   Loader2,
-  Github
+  LogOut,
 } from "lucide-react";
 
 /* ───────── Flow & IPFS Themed Icons ───────── */
@@ -48,28 +38,17 @@ interface ContributorPR {
   link: string;
 }
 
-interface RepoConfig {
-  name: string;
-  targetBranches: string[];
-  weights: {
-    impact: number;
-    complexity: number;
-    quality: number;
-    review: number;
-    priority: number;
-  };
-}
-
 const statusOrder: PRStatus[] = ["submitted", "merged", "eligible", "payout"];
 
 export default function ContributorDashboardPage() {
   const [token, setToken] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [scoreData, setScoreData] = useState<any>(null);
-  const [repos, setRepos] = useState<RepoConfig[]>([]);
-  const [newRepo, setNewRepo] = useState("");
-  const [editBranches, setEditBranches] = useState<Record<string, string>>({});
-  const [editWeights, setEditWeights] = useState<Record<string, any>>({});
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    window.location.href = "/login";
+  };
 
   const fetchData = async (authToken: string) => {
     setLoading(true);
@@ -83,14 +62,7 @@ export default function ContributorDashboardPage() {
             setScoreData(sData);
         }
 
-        // Fetch Repo Info
-        const repoRes = await fetch("http://localhost:5000/api/org/info", {
-            headers: { "Authorization": `Bearer ${authToken}` }
-        });
-        const rData = await repoRes.json();
-        if (rData.success) {
-            setRepos(rData.repositories || []);
-        }
+
     } catch (e) {
         console.error("Fetch error:", e);
     } finally {
@@ -110,60 +82,7 @@ export default function ContributorDashboardPage() {
         }
     }, []);
 
-  const addRepo = async () => {
-    if (!newRepo) return;
-    try {
-        const res = await fetch("http://localhost:5000/api/org/repositories", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ repository: newRepo })
-        });
-        const data = await res.json();
-        if (data.success) {
-            setRepos(data.repositories);
-            setNewRepo("");
-        }
-    } catch (e) {
-        console.error(e);
-    }
-  };
 
-  const updateTargetBranches = async (repoName: string) => {
-    try {
-        const branchesString = editBranches[repoName] ?? "";
-        const branchesArray = branchesString.split(",").map(b => b.trim()).filter(Boolean);
-        const res = await fetch(`http://localhost:5000/api/org/repositories/${encodeURIComponent(repoName)}/branches`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify({ targetBranches: branchesArray })
-        });
-        const data = await res.json();
-        if (data.success) {
-            setRepos(data.repositories);
-            alert("Target branches updated!");
-        }
-    } catch (e) {
-        console.error(e);
-    }
-  };
-
-  const updateRepoWeights = async (repoName: string, defaults: any) => {
-    try {
-        const weightsToSave = editWeights[repoName] || defaults;
-        const res = await fetch(`http://localhost:5000/api/org/repositories/${encodeURIComponent(repoName)}/weights`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-            body: JSON.stringify(weightsToSave)
-        });
-        const data = await res.json();
-        if (data.success) {
-            setRepos(data.repositories);
-            alert("Weights updated successfully!");
-        }
-    } catch (e) {
-        console.error(e);
-    }
-  };
 
   if (loading && !scoreData) {
       return (
@@ -211,6 +130,13 @@ export default function ContributorDashboardPage() {
           <button className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm">
             <GitPullRequest className="w-4 h-4" />
             Submit New Contribution
+          </button>
+          <button
+            onClick={handleLogout}
+            title="Logout"
+            className="p-3 rounded-2xl bg-destructive/10 text-destructive hover:bg-destructive hover:text-white transition-all border border-destructive/20"
+          >
+            <LogOut className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -268,87 +194,6 @@ export default function ContributorDashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
           
-          {/* Repository Weights */}
-          <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
-            <div className="flex items-center gap-3 mb-8">
-                <Building2 className="w-6 h-6 text-primary" />
-                <h2 className="text-2xl font-black tracking-tight">Weight Configuration</h2>
-            </div>
-            
-            <div className="space-y-6">
-                <div className="flex gap-2">
-                    <input 
-                        type="text" 
-                        value={newRepo} 
-                        onChange={e => setNewRepo(e.target.value)} 
-                        placeholder="Add your repository (e.g. owner/repo)" 
-                        className="flex-1 bg-background border border-border rounded-xl px-4 py-3 text-sm font-mono text-foreground focus:outline-none focus:border-primary/50"
-                    />
-                    <button onClick={addRepo} className="bg-primary text-primary-foreground font-bold px-6 rounded-xl text-sm hover:opacity-90 transition-opacity">Add Repo</button>
-                </div>
-
-                {repos.length === 0 ? (
-                    <div className="p-6 bg-muted/20 border border-dashed border-border rounded-3xl text-center">
-                        <p className="text-sm text-muted-foreground italic">No repositories configured. Add one to start defining algorithm weights.</p>
-                    </div>
-                ) : (
-                    <div className="space-y-4">
-                        {repos.map(r => {
-                            const currentWeights = editWeights[r.name] || r.weights;
-                            const branchesStr = editBranches[r.name] !== undefined ? editBranches[r.name] : r.targetBranches.join(", ");
-                            return (
-                                <div key={r.name} className="p-6 bg-muted/10 border border-border rounded-3xl flex flex-col gap-6">
-                                    <div className="flex items-center justify-between border-b border-border pb-3">
-                                        <div className="flex items-center gap-2">
-                                            <Github className="w-4 h-4 text-muted-foreground" />
-                                            <span className="text-lg font-bold font-mono text-foreground">{r.name}</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                        <div>
-                                            <h3 className="text-[10px] font-black text-muted-foreground mb-3 uppercase tracking-widest">Target Branches</h3>
-                                            <div className="flex gap-2">
-                                                <input 
-                                                    type="text" 
-                                                    value={branchesStr}
-                                                    onChange={e => setEditBranches(prev => ({...prev, [r.name]: e.target.value}))}
-                                                    placeholder="main, master"
-                                                    className="flex-1 bg-background border border-border rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary/50"
-                                                />
-                                                <button onClick={() => updateTargetBranches(r.name)} className="bg-primary/20 text-primary font-bold px-4 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Set</button>
-                                            </div>
-                                        </div>
-
-                                        <div>
-                                            <h3 className="text-[10px] font-black text-muted-foreground mb-3 uppercase tracking-widest">Algo Pricing</h3>
-                                            <div className="grid grid-cols-2 gap-2 mb-4">
-                                                {Object.entries(currentWeights).map(([k, v]) => (
-                                                    <div key={k} className="flex items-center justify-between gap-2 p-2 bg-background border border-border rounded-xl">
-                                                        <label className="text-[9px] font-black text-muted-foreground uppercase">{k.substring(0,3)}</label>
-                                                        <input 
-                                                            type="number" 
-                                                            step="0.05"
-                                                            value={v as number}
-                                                            onChange={e => setEditWeights(prev => ({
-                                                                ...prev,
-                                                                [r.name]: { ...currentWeights, [k]: parseFloat(e.target.value) }
-                                                            }))}
-                                                            className="w-12 bg-transparent text-right text-xs font-mono font-bold focus:outline-none focus:text-primary"
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </div>
-                                            <button onClick={() => updateRepoWeights(r.name, r.weights)} className="w-full bg-primary/20 text-primary font-bold py-2.5 rounded-xl text-sm hover:bg-primary hover:text-primary-foreground transition-colors">Update Weights</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </div>
-          </div>
 
           {/* Real PR Pipeline Tracking */}
           <div className="bg-card border border-border rounded-[2.5rem] p-8 shadow-sm">
