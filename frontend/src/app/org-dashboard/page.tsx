@@ -100,7 +100,7 @@ export default function OrgDashboardPage() {
                 headers: { "Authorization": `Bearer ${authToken}` }
             });
             const rData = await repoRes.json();
-            if (rData.success) setRepos(rData.repositories || []);
+            if (rData.success) setRepos(Array.isArray(rData.repositories) ? rData.repositories : []);
 
             // Contributors & Events (Real Algorithm Results)
             const contRes = await fetch("http://localhost:5000/api/org/contributors", {
@@ -108,8 +108,8 @@ export default function OrgDashboardPage() {
             });
             const cData = await contRes.json();
             if (cData.success) {
-                setContributors(cData.contributors || []);
-                setRecentEvents(cData.recentEvents || []);
+                setContributors(Array.isArray(cData.contributors) ? cData.contributors : []);
+                setRecentEvents(Array.isArray(cData.recentEvents) ? cData.recentEvents : []);
             }
 
         } catch (e) {
@@ -194,8 +194,10 @@ export default function OrgDashboardPage() {
         );
     }
 
-    const totalScoreAvg = contributors.length > 0 ? (contributors.reduce((acc, c) => acc + c.totalScore, 0) / contributors.length).toFixed(1) : "0";
-    const totalFlowPool = contributors.reduce((acc, c) => acc + (c.totalScore * 5), 0);
+    const safeContributors = Array.isArray(contributors) ? contributors : [];
+    const safeRecentEvents = Array.isArray(recentEvents) ? recentEvents : [];
+    const totalScoreAvg = safeContributors.length > 0 ? (safeContributors.reduce((acc, c) => acc + c.totalScore, 0) / safeContributors.length).toFixed(1) : "0";
+    const totalFlowPool = safeContributors.reduce((acc, c) => acc + (c.totalScore * 5), 0);
 
     return (
         <div className="min-h-screen pt-28 pb-16 px-4 md:px-8 max-w-[1600px] mx-auto w-full font-sans">
@@ -255,7 +257,7 @@ export default function OrgDashboardPage() {
                             <Users className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">{contributors.length}</div>
+                    <div className="text-3xl font-black font-mono">{safeContributors.length}</div>
                     <div className="text-sm text-muted-foreground mt-1 font-medium italic">Across {repos.length} repositories</div>
                 </div>
 
@@ -373,10 +375,10 @@ export default function OrgDashboardPage() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {repos.map(r => {
                                     // Compute per-repo contributor count and PR count from contributors data
-                                    const repoContributors = contributors.filter(c =>
-                                        recentEvents.some(e => e.repo === r.name && e.username === c.username)
+                                    const repoContributors = safeContributors.filter(c =>
+                                        safeRecentEvents.some(e => e.repo === r.name && e.username === c.username)
                                     );
-                                    const repoPRs = recentEvents.filter(e => e.repo === r.name);
+                                    const repoPRs = safeRecentEvents.filter(e => e.repo === r.name);
                                     const repoAvgScore = repoPRs.length > 0
                                         ? (repoPRs.reduce((sum, e) => sum + e.score, 0) / repoPRs.length).toFixed(1)
                                         : "—";
@@ -398,7 +400,7 @@ export default function OrgDashboardPage() {
                                             {/* Quick stats row */}
                                             <div className="grid grid-cols-3 gap-2">
                                                 <div className="p-2 bg-background border border-border rounded-xl text-center">
-                                                    <div className="text-lg font-black font-mono text-primary">{repoContributors.length || contributors.length}</div>
+                                                    <div className="text-lg font-black font-mono text-primary">{repoContributors.length || safeContributors.length}</div>
                                                     <div className="text-[9px] font-black text-muted-foreground uppercase tracking-widest mt-0.5">Devs</div>
                                                 </div>
                                                 <div className="p-2 bg-background border border-border rounded-xl text-center">
@@ -472,7 +474,7 @@ export default function OrgDashboardPage() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border">
-                                    {contributors.map((c, i) => (
+                                    {safeContributors.map((c, i) => (
                                         <tr key={c.username} className="hover:bg-muted/10 transition-colors group">
                                             <td className="px-8 py-6">
                                                 <div className="flex items-center gap-3">
@@ -504,7 +506,7 @@ export default function OrgDashboardPage() {
                                             </td>
                                         </tr>
                                     ))}
-                                    {contributors.length === 0 && (
+                                    {safeContributors.length === 0 && (
                                         <tr>
                                             <td colSpan={5} className="px-8 py-12 text-center text-muted-foreground italic font-medium opacity-60">No contributors discovered in organization repositories.</td>
                                         </tr>
@@ -560,7 +562,7 @@ export default function OrgDashboardPage() {
                             <span className="text-[9px] font-black bg-emerald-500/10 text-emerald-500 px-2 py-1 rounded">CYCLE 4</span>
                         </div>
                         <div className="space-y-6">
-                            {contributors.slice(0, 5).map((user, i) => (
+                            {safeContributors.slice(0, 5).map((user, i) => (
                                 <div key={user.username} className="flex items-center justify-between p-3 rounded-2xl hover:bg-muted/10 transition-all cursor-pointer">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
@@ -577,7 +579,7 @@ export default function OrgDashboardPage() {
                                     </div>
                                 </div>
                             ))}
-                            {contributors.length === 0 && (
+                            {safeContributors.length === 0 && (
                                 <p className="text-xs text-muted-foreground italic text-center py-4">Scanning for top contributors...</p>
                             )}
                         </div>
@@ -590,7 +592,7 @@ export default function OrgDashboardPage() {
                             <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest">Audit Archive (IPFS)</h3>
                         </div>
                         <div className="space-y-4">
-                            {recentEvents.map((event, i) => (
+                            {safeRecentEvents.map((event, i) => (
                                 <div key={i} className="p-4 bg-white/5 border border-white/10 rounded-2xl flex flex-col gap-2 group hover:bg-white/10 transition-all cursor-pointer">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
@@ -605,7 +607,7 @@ export default function OrgDashboardPage() {
                                     </div>
                                 </div>
                             ))}
-                            {recentEvents.length === 0 && (
+                            {safeRecentEvents.length === 0 && (
                                 <div className="text-center py-8">
                                     <FileSearch className="w-8 h-8 text-white/10 mx-auto mb-3" />
                                     <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest">No recent audit logs</p>
