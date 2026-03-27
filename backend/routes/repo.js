@@ -72,6 +72,23 @@ router.get('/info', authenticateToken, async (req, res) => {
 });
 
 /**
+ * Normalize a repo identifier to "owner/repo" format.
+ * Accepts full GitHub URLs, github.com/owner/repo, or plain owner/repo.
+ */
+function normalizeRepoName(input) {
+    // Strip protocol and domain if present
+    let cleaned = input.trim();
+    cleaned = cleaned.replace(/^https?:\/\//i, '');   // remove https:// or http://
+    cleaned = cleaned.replace(/^github\.com\//i, ''); // remove github.com/
+    cleaned = cleaned.replace(/\.git$/i, '');          // remove trailing .git
+    cleaned = cleaned.replace(/\/+$/, '');             // remove trailing slashes
+    // Now should be "owner/repo" — take only first two path segments
+    const parts = cleaned.split('/').filter(Boolean);
+    if (parts.length < 2) return cleaned; // can't normalize, return as-is
+    return `${parts[0]}/${parts[1]}`;
+}
+
+/**
  * POST /api/org/repositories
  */
 router.post('/repositories', authenticateToken, async (req, res) => {
@@ -79,12 +96,14 @@ router.post('/repositories', authenticateToken, async (req, res) => {
         const { repository } = req.body;
         if (!repository) return res.status(400).json({ error: 'Repository name required' });
 
+        const repoName = normalizeRepoName(repository); // always store as owner/repo
+
         const user = await User.findById(req.user.id);
-        const exists = user.repositories.find(r => r.name === repository);
+        const exists = user.repositories.find(r => r.name === repoName);
         if (!exists) {
             user.repositories.push({
-                name: repository,
-                targetBranches: ['main'], 
+                name: repoName,
+                targetBranches: ['main'],
                 weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 }
             });
             await user.save();
@@ -101,7 +120,8 @@ router.post('/repositories', authenticateToken, async (req, res) => {
  */
 router.get('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
     try {
-        const repoName = decodeURIComponent(req.params.repoId);
+        // Normalize in case old records were stored as full URLs
+        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
         const pat = process.env.GITHUB_PAT;
 
         const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Kinetic-App' };
