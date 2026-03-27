@@ -101,6 +101,17 @@ export async function computeContributionScore(username, token, options = {}) {
         const user = await User.findOne({ github: username });
         const userRepos = user?.repositories || [];
 
+        // Build a map of ALL repos registered on the platform (across all org users)
+        // key: repo full name (owner/repo), value: weights config from the registering org
+        const allOrgUsers = await User.find({ 'repositories.0': { $exists: true } });
+        const registeredRepoMap = {};
+        for (const orgUser of allOrgUsers) {
+            for (const repo of orgUser.repositories) {
+                // org-defined weights take precedence; contributor's own config is a fallback
+                registeredRepoMap[repo.name] = repo;
+            }
+        }
+
         // Fetch merged PRs using search API
         const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
         const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=15`, { headers });
@@ -121,7 +132,12 @@ export async function computeContributionScore(username, token, options = {}) {
             const prData = await prRes.json();
 
             const repoFullName = prData.base?.repo?.full_name;
-            const repoConfig = userRepos.find(r => r.name === repoFullName);
+
+            // ── FILTER: only track PRs for repos registered on the platform ──
+            if (!repoFullName || !registeredRepoMap[repoFullName]) continue;
+
+            // Use org-defined weights for this repo (fallback to contributor's own config)
+            const repoConfig = registeredRepoMap[repoFullName] || userRepos.find(r => r.name === repoFullName);
             const weights = repoConfig?.weights || null;
 
             const metrics = extractPRMetrics(prData);
