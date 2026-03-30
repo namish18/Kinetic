@@ -157,7 +157,7 @@ router.get('/repositories/:repoId/branches', authenticateToken, async (req, res)
 
 router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
     try {
-        const repoName = decodeURIComponent(req.params.repoId);
+        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
         const { targetBranches } = req.body;
 
         const user = await User.findById(req.user.id);
