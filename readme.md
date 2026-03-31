@@ -31,7 +31,7 @@ Kinetic triangulates six independent signal layers using its **MSTS engine** to 
 
 - [Sponsor Integration](#sponsor-integration)
   - [Flow Blockchain](#flow-blockchain)
-  - [Filecoin Foundation](#filecoin-foundation)
+  - [Protocol Labs: DID & IPFS](#protocol-labs-did--ipfs)
 - [Project Structure](#project-structure)
 - [API Reference](#api-reference)
 - [License](#license)
@@ -256,13 +256,14 @@ Flow serves as the settlement layer for all contributor payouts. The integration
 - **Frontend Integration**: The FCL library is configured in `src/lib/flow.ts` to connect to the Flow Testnet access node and discovery wallet. All read operations (treasury balance, payout details, signer lists) and write operations (submit, approve, execute payouts, deposit funds) are implemented as typed wrapper functions.
 - **Visual Presence**: The Flow logo is prominently featured in the `OrbitingEcosystem` component on the landing page, orbiting the central Kinetic icon alongside other ecosystem partners.
 
-### Filecoin Foundation
+### Protocol Labs: DID & IPFS
 
-Filecoin Foundation's presence is reflected in both the product design and the platform's target audience:
+Protocol Labs' decentralized identity and storage technologies serve as the backbone for Kinetic's contributor verification and data persistence:
 
-- **Target Ecosystem**: Kinetic is designed to measure and reward contributions to Protocol Labs repositories, which include the Filecoin network, IPFS, libp2p, and related infrastructure.
-- **Visual Presence**: The Filecoin Foundation logo appears in the `OrbitingEcosystem` component on the landing page, representing the broader Protocol Labs ecosystem that Kinetic serves.
-- **DID Infrastructure**: The Decentralized Identifier system, powered by the Ceramic / Protocol Labs stack, reflects the decentralized identity principles championed by the Filecoin ecosystem.
+- **Decentralized Identity (DID)**: Kinetic implements the `key-did-provider-ed25519` standard to mint unique, sovereign DIDs for every contributor upon GitHub authentication. This ensures that reputation and scoring are tied to a cryptographic identity rather than just a platform-specific username.
+- **IPFS Persistence**: DID documents and verifiable contribution snapshots are stored and resolved using an in-process **Helia IPFS node**. This ensures that the metadata powering the meritocratic engine is decentralized, tamper-proof, and highly available.
+- **Ceramic Integration**: The system leverages the Ceramic network's principles for verifiable data streams, ensuring that a contributor's scoring history is transparent and auditable across the Protocol Labs ecosystem.
+- **Visual Presence**: The Protocol Labs and IPFS logos are prominently featured in the `OrbitingEcosystem` component on the landing page, symbolizing the core infrastructure that powers Kinetic's trustless scoring.
 
 ---
 

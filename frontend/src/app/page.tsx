@@ -19,7 +19,7 @@ export default function LandingPage() {
     { node: <TickerItem text="Paid 24.5 FLOW to @alicedev for PR #901 on go-ipfs" /> },
     { node: <TickerItem text="Paid 12.1 FLOW to @stebien for Issue #22 on libp2p" /> },
     { node: <TickerItem text="Paid 45.0 FLOW to @daviddias for PR #442 on lotus" /> },
-    { node: <TickerItem text="Paid 8.9 FLOW to @momack2 for Issue #11 on filecoin-project" /> },
+    { node: <TickerItem text="Paid 8.9 FLOW to @momack2 for Issue #11 on protocol" /> },
     { node: <TickerItem text="Paid 33.2 FLOW to @why for PR #88 on rust-libp2p" /> },
     { node: <TickerItem text="Paid 15.5 FLOW to @raulk for PR #671 on testground" /> },
   ];

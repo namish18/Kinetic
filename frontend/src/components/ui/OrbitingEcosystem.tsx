@@ -3,7 +3,7 @@ import React, { useEffect, useState, memo } from 'react';
 import { Github, Fingerprint, Hexagon, Atom } from 'lucide-react';
 
 // --- Type Definitions ---
-type IconType = 'github' | 'stripe' | 'filecoin' | 'flow' | 'did';
+type IconType = 'github' | 'stripe' | 'ipfs' | 'flow' | 'did';
 
 type GlowColor = 'cyan' | 'purple' | 'blue';
 
@@ -49,13 +49,13 @@ const iconComponents: Record<IconType, { component: () => React.JSX.Element; col
         ),
         color: '#635BFF'
     },
-    filecoin: {
+    ipfs: {
         component: () => (
             <div className="w-full h-full flex items-center justify-center rounded-xl overflow-hidden p-[2px]">
-                <img src="https://auth.devspot.app/storage/v1/object/public/hackathon-images/sponsors/Filecoin%20Foundation/513386ec-c9c1-4477-a405-e22948e66a06.svg" alt="Filecoin" className="w-full h-full object-contain" />
+                <img src="https://upload.wikimedia.org/wikipedia/commons/c/c2/IPFS_logo.png" alt="IPFS" className="w-full h-full object-contain" />
             </div>
         ),
-        color: '#0090FF'
+        color: '#65C2CB'
     },
     flow: {
         component: () => (
@@ -113,14 +113,14 @@ const skillsConfig: SkillConfig[] = [
     },
     // Outer Orbit
     {
-        id: 'filecoin',
+        id: 'ipfs',
         orbitRadius: 190,
         size: 55,
         speed: -0.4,
-        iconType: 'filecoin',
+        iconType: 'ipfs',
         phaseShift: 0,
         glowColor: 'cyan',
-        label: 'Filecoin'
+        label: 'IPFS'
     },
     {
         id: 'flow',
