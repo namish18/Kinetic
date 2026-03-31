@@ -1,4 +1,4 @@
-# Kinetic ⚡
+# Kinetic 
 
 [![Stack](https://img.shields.io/badge/Stack-Next.js%20%7C%20Node.js%20%7C%20Flow-blue)](https://github.com/namish18/Kinetic)
 [![License](https://img.shields.io/badge/License-ISC-green)](LICENSE)
@@ -6,10 +6,10 @@
 
 **Kinetic** is a meritocratic funding platform purpose-built for Protocol Labs contributors. It replaces vanity "green square" metrics with a **mathematically rigorous scoring engine** that measures the true engineering complexity and ecosystem impact of open-source work.
 
-### 🚫 The Problem
+### The Problem
 Traditional bounty systems are "first-come, first-served" or based on simplistic commit counts. This leads to **micro-PR farming**, **code bloat**, and **reputation dominance**, where new, high-quality contributors struggle to compete against established "elites."
 
-### ✨ The Kinetic Solution
+### The Solution - KINETIC
 Kinetic triangulates six independent signal layers using its **MSTS engine** to determine a contributor's final value. It incentivizes **high-leverage engineering**, **cross-repo collaboration**, and **production-grade reliability**.
 
 
