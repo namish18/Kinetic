@@ -86,6 +86,7 @@ export default function OrgDashboardPage() {
     const [loading, setLoading] = useState(true);
     const [newRepo, setNewRepo] = useState("");
     const [signatures, setSignatures] = useState([true, true, false]);
+    const [isExecutingPayout, setIsExecutingPayout] = useState(false);
 
     // ── Weight modal state ──
     const [weightModal, setWeightModal] = useState<{ open: boolean; repoName: string; weights: Record<WeightKey, number> }>({
@@ -158,6 +159,27 @@ export default function OrgDashboardPage() {
                 setNewRepo("");
             }
         } catch (e) { console.error(e); }
+    };
+
+    const handleExecutePayout = async () => {
+        setIsExecutingPayout(true);
+        try {
+            const res = await fetch("http://localhost:5000/api/org/payout/execute", {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert(`Successfully executed payouts on Flow network for ${data.results.length} contributors!`);
+            } else {
+                alert("Execution failed: " + data.error);
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Execution failed due to network error.");
+        } finally {
+            setIsExecutingPayout(false);
+        }
     };
 
     // ── Weight modal handlers ──────────────────────────────────────
@@ -425,8 +447,8 @@ export default function OrgDashboardPage() {
                         {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCcw className="w-5 h-5" />}
                     </button>
                     <div className="h-10 w-[1px] bg-border mx-2" />
-                    <button className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm">
-                        <Zap className="w-4 h-4 fill-current" />
+                    <button onClick={handleExecutePayout} disabled={isExecutingPayout} className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm disabled:opacity-50">
+                        {isExecutingPayout ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 fill-current" />}
                         Execute Payouts
                     </button>
                     <button
@@ -757,7 +779,8 @@ export default function OrgDashboardPage() {
                                 Multi-sig required to stream <span className="text-primary font-black">{totalFlowPool.toLocaleString()} FLOW</span>. Transaction builds upon <span className="underline decoration-primary/50 underline-offset-4 decoration-2">Algorithmic Valuation Snapshot #421</span>.
                             </p>
 
-                            <button className="w-full bg-primary text-primary-foreground font-black py-4 rounded-[1.25rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest">
+                            <button onClick={handleExecutePayout} disabled={isExecutingPayout} className="w-full bg-primary text-primary-foreground font-black py-4 rounded-[1.25rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2">
+                                {isExecutingPayout ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
                                 Sign & Execute
                             </button>
                         </div>

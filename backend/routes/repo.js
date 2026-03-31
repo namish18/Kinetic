@@ -1,6 +1,8 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import User from '../models/User.js';
+import { proposePayout } from '../services/flowService.js';
 
 const router = express.Router();
 
@@ -199,3 +201,35 @@ router.put('/repositories/:repoId/weights', authenticateToken, async (req, res) 
 });
 
 export default router;
+
+/**
+ * POST /api/org/payout/execute
+ * Propose payouts on the Flow blockchain for all contributors 
+ */
+router.post('/payout/execute', authenticateToken, async (req, res) => {
+    try {
+        const { contributors } = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
+        
+        if (!contributors || contributors.length === 0) {
+            return res.status(400).json({ error: 'No contributors found to payout.' });
+        }
+
+        const fallbackWallet = process.env.FLOW_ADDRESS || "0x01cf0e2f2f715450";
+        const results = [];
+        
+        for (const c of contributors) {
+            const amount = c.totalScore * 5; // 5 FLOW per pt (as defined in frontend)
+            if (amount <= 0) continue;
+
+            const userDoc = await User.findOne({ github: c.username });
+            const wallet = userDoc?.wallet || fallbackWallet;
+
+            const txResult = await proposePayout(wallet, amount);
+            results.push({ username: c.username, amount, txResult });
+        }
+
+        res.json({ success: true, results });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error', message: error.message });
+    }
+});
