@@ -4,7 +4,18 @@
 
 # FINAL ALGORITHM
 
+## Step -1: Verification Gate (Proof-of-Build)
+
+Before any PR is processed by the scoring engine, it must pass the **Proof-of-Build** verification.
+
+1. **Query GitHub Actions API**: Fetch all workflow runs associated with the PR's head commit.
+2. **Success Requirement**: At least one CI/CD run must have a `conclusion` of `success`.
+3. **Failure Policy**: If no successful build trace is found, `FinalScore = 0`. No further calculations are performed.
+
+---
+
 ## Step 0: Inputs
+
 
 For each PR *i*:
 

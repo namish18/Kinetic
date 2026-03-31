@@ -1,8 +1,17 @@
-# Kinetic
+# Kinetic ⚡
 
-**Kinetic** is a meritocratic funding platform purpose-built for Protocol Labs contributors. It replaces vanity metrics with a mathematically rigorous scoring engine that measures the true engineering complexity and ecosystem impact of open-source work across the Protocol Labs network, including IPFS, Filecoin, libp2p, and related projects.
+[![Stack](https://img.shields.io/badge/Stack-Next.js%20%7C%20Node.js%20%7C%20Flow-blue)](https://github.com/namish18/Kinetic)
+[![License](https://img.shields.io/badge/License-ISC-green)](LICENSE)
+[![Hackathon](https://img.shields.io/badge/Hackathon-Protocol%20Labs%20Ready-orange)](https://github.com/namish18/Kinetic)
 
-At its core lies the **Multi-Signal Triangulation Score (MSTS)**, a composite formula specifically tuned to reward high-leverage engineering tasks, cross-repository collaboration, and durable, production-grade code.
+**Kinetic** is a meritocratic funding platform purpose-built for Protocol Labs contributors. It replaces vanity "green square" metrics with a **mathematically rigorous scoring engine** that measures the true engineering complexity and ecosystem impact of open-source work.
+
+### 🚫 The Problem
+Traditional bounty systems are "first-come, first-served" or based on simplistic commit counts. This leads to **micro-PR farming**, **code bloat**, and **reputation dominance**, where new, high-quality contributors struggle to compete against established "elites."
+
+### ✨ The Kinetic Solution
+Kinetic triangulates six independent signal layers using its **MSTS engine** to determine a contributor's final value. It incentivizes **high-leverage engineering**, **cross-repo collaboration**, and **production-grade reliability**.
+
 
 ---
 
@@ -15,10 +24,11 @@ At its core lies the **Multi-Signal Triangulation Score (MSTS)**, a composite fo
   - [Frontend Setup](#frontend-setup)
   - [Flow Blockchain Setup](#flow-blockchain-setup)
 - [Features](#features)
-  - [Multi-Signal Triangulation Score](#multi-signal-triangulation-score)
-  - [Proof-of-Build Verification](#proof-of-build-verification)
+  - [The Contribution Scoring Engine (MSTS v2)](#the-contribution-scoring-engine-msts-v2)
+  - [Proof-of-Build Verification](#1-the-verification-gate-proof-of-build)
   - [Decentralized Identity](#decentralized-identity)
   - [Autonomous FLOW Payouts](#autonomous-flow-payouts)
+
 - [Sponsor Integration](#sponsor-integration)
   - [Flow Blockchain](#flow-blockchain)
   - [Filecoin Foundation](#filecoin-foundation)
@@ -30,13 +40,30 @@ At its core lies the **Multi-Signal Triangulation Score (MSTS)**, a composite fo
 
 ## Architecture Overview
 
-Kinetic is organized as a monorepo consisting of three principal layers:
+Kinetic is organized as a monorepo consisting of three principal layers, achieving a seamless transition from code contribution to on-chain payout.
+
+```mermaid
+sequenceDiagram
+    participant GH as GitHub (Webhooks)
+    participant KB as Kinetic Backend
+    participant DB as MongoDB
+    participant BC as Flow Blockchain (Cadence)
+
+    GH->>KB: PR Merged / Review Submitted
+    KB->>GH: Query GitHub Actions (Proof-of-Build)
+    KB->>KB: Calculate MSTS (Multi-Signal Score)
+    KB->>DB: Persist Contribution Data
+    KB->>BC: Propose Payout (Transaction)
+    BC-->>BC: Multi-Sig Approval Cycle
+    BC->>BC: Execute Payout (FLOW Disbursement)
+```
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **Frontend** | Next.js 16, React 19, TailwindCSS 4, GSAP | Interactive dashboard, contributor onboarding, and landing pages |
-| **Backend** | Node.js, Express, MongoDB, Passport (GitHub OAuth) | REST API, GitHub webhook processing, contribution scoring engine |
-| **Blockchain** | Flow Testnet, Cadence smart contracts, FCL | On-chain treasury management, payout proposals, and multi-sig approvals |
+| **Frontend** | Next.js 16, React 19, Tailwind CSS 4, GSAP | High-fidelity dashboard for organizations and contributors. |
+| **Backend** | Node.js, Express, MongoDB, Passport (OAuth) | Scoring engine, DID management, and webhook orchestration. |
+| **Blockchain** | Flow Testnet, Cadence, FCL | Secure, transparent treasury management and multi-sig distributions. |
+
 
 ---
 
@@ -158,22 +185,46 @@ Refer to the [Flow CLI Documentation](https://developers.flow.com/tools/flow-cli
 
 ## Features
 
-### Multi-Signal Triangulation Score
+### The Contribution Scoring Engine
 
-Rather than relying on simplistic commit counts, Kinetic triangulates six independent signal layers to determine a contributor's monthly payout allocation:
+Kinetic moves beyond "vanity metrics" (like commit counts or lines of code) by employing a multi-staged algorithmic pipeline. This engine ensures that payouts are mathematically proportional to the **actual engineering value** delivered.
 
-| Layer | Weight | Signal |
-|-------|--------|--------|
-| **Task Complexity** | 30% | Log-scaled lines changed, files touched, review cycles, and issue categorization |
-| **Code Survival Rate** | 20% | Percentage of original lines remaining unmodified after 6-12 months |
-| **Issue Resolution Velocity** | 20% | Time-to-close for critical path issues, weighted by repository priority tier |
-| **PR Review Depth** | 15% | Review comment density, requested changes, and consensus-building cycles |
-| **Cross-Repo Contribution** | 10% | Multiplier for contributors with merged code in three or more distinct repositories |
-| **Temporal Decay** | 5% | Recency weighting that favors active, ongoing maintenance over historical reputation |
+#### 1. The Verification Gate: Proof-of-Build
+Before any analysis occurs, every contribution must pass the **Proof-of-Build** gate. Kinetic queries the GitHub Actions API to verify that the specific commit hash successfully passed all CI/CD integration tests.
+> [!IMPORTANT]
+> Merged code without a corresponding successful build trace receives a final score of **zero**.
 
-### Proof-of-Build Verification
+#### 2. The Algorithmic Pipeline
 
-All scored contributions are gated behind a verification layer called **Proof-of-Build**. No code receives a score unless it is accompanied by a verified CI/CD execution trace. The backend queries the GitHub Actions API to confirm that a specific run ID compiled successfully and passed all integration tests. If no verified build trace exists for a merged contribution, its final score is set to zero.
+```mermaid
+graph TD
+    A[Merged PR] --> B{Proof-of-Build}
+    B -- Fail --> C[Score: 0]
+    B -- Pass --> D[Anti-Gaming Filters]
+    D -- Spam/Low Quality --> C
+    D -- Valid --> E[Base Scoring Engine]
+    E --> F[Reputation Multiplier]
+    F --> G[Post-Adjustment Filters]
+    G --> H[Final Payout Allocation]
+```
+
+#### 3. Core Scoring Components
+
+| Layer | Component | Description |
+| :--- | :--- | :--- |
+| **Filter** | **Anti-Gaming** | Hard cutoffs for quality (<0.3) and impact (<0.2) to prevent "micro-PR" farming. |
+| **Base** | **Impact & Complexity** | Log-scaled complexity calculation `log(lines + 1) / log(max + 1)` prevents reward for "code bloat". |
+| **Base** | **Review Depth** | Maintainer review scores and comment density; rewards "consensus-building" code. |
+| **Incentive**| **Reputation (1.5x)** | A capped 1.5x multiplier based on historical consistency and "Code Survival Rate". |
+| **Stability**| **Diminishing Returns** | Applies a penalty factor `1 / (1 + 0.1*(k-1))` for high-frequency PR spamming. |
+
+#### 4. The Math Behind the Meritocracy
+
+The final score for any contribution $i$ is calculated as:
+$$FinalScore_i = \left( \sum w_n \cdot Metric_{ni} \right) \times \left( 1 + \lambda \cdot \log(Reputation_i + 1) \right) \times Penalty_{spam}$$
+
+This dual-layered approach balances objective PR metrics with long-term ecosystem health.
+
 
 ### Decentralized Identity
 
