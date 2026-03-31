@@ -45,6 +45,11 @@ export default function ContributorDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [scoreData, setScoreData] = useState<any>(null);
 
+  const FLOW_TO_USD = 0.02874;
+  const formatUSD = (flow: number) => {
+    return (flow * FLOW_TO_USD).toLocaleString("en-US", { style: "currency", currency: "USD" });
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("token");
     window.location.href = "/login";
@@ -161,7 +166,10 @@ export default function ContributorDashboardPage() {
               <IconFlow />
             </div>
           </div>
-          <div className="text-4xl font-black font-mono">{payout} FLOW</div>
+          <div className="flex flex-col">
+            <div className="text-4xl font-black font-mono">{payout} FLOW</div>
+            <div className="text-xs font-bold text-muted-foreground mt-1">{formatUSD(payout)} USD</div>
+          </div>
           <div className="flex items-center gap-1.5 text-xs text-emerald-500 font-bold mt-2">
             <ArrowUpRight className="w-3 h-3" />
             Active Reward Pool
@@ -273,9 +281,12 @@ export default function ContributorDashboardPage() {
             <div className="space-y-8">
               <div>
                 <span className="text-[10px] font-black text-muted-foreground uppercase tracking-wider block mb-2">Algorithm Value Generated</span>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-black font-mono">{payout}</span>
-                  <span className="text-sm font-bold text-muted-foreground">FLOW</span>
+                <div className="flex flex-col">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-black font-mono">{payout}</span>
+                    <span className="text-sm font-bold text-muted-foreground">FLOW</span>
+                  </div>
+                  <div className="text-xs font-bold text-muted-foreground mt-1">{formatUSD(payout)} USD</div>
                 </div>
               </div>
               <div className="pt-6 border-t border-border">

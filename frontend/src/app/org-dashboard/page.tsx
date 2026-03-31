@@ -59,6 +59,7 @@ interface RepoConfig {
         review: number;
         priority: number;
     };
+    bountyPool: number;
 }
 
 const StatusBadge = ({ status }: { status: TxStatus }) => {
@@ -88,18 +89,32 @@ export default function OrgDashboardPage() {
     const [signatures, setSignatures] = useState([true, true, false]);
     const [isExecutingPayout, setIsExecutingPayout] = useState(false);
 
-    // ── Weight modal state ──
-    const [weightModal, setWeightModal] = useState<{ open: boolean; repoName: string; weights: Record<WeightKey, number> }>({
-        open: false, repoName: "",
-        weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 }
+    // ── Unified Repo Edit Modal ──
+    const [editModal, setEditModal] = useState<{
+        open: boolean;
+        repoName: string;
+        weights: Record<WeightKey, number>;
+        targetBranches: string[];
+        bountyPool: number;
+        availableBranches: string[];
+        loadingBranches: boolean;
+        error: string;
+    }>({
+        open: false,
+        repoName: "",
+        weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 },
+        targetBranches: [],
+        bountyPool: 100,
+        availableBranches: [],
+        loadingBranches: false,
+        error: ""
     });
 
-    // ── Branch picker modal state ──
-    const [branchModal, setBranchModal] = useState<{
-        open: boolean; repoName: string;
-        available: string[]; selected: string[];
-        loadingBranches: boolean; error: string;
-    }>({ open: false, repoName: "", available: [], selected: [], loadingBranches: false, error: "" });
+    const FLOW_TO_USD = 0.02874;
+
+    const formatUSD = (flow: number) => {
+        return (flow * FLOW_TO_USD).toLocaleString("en-US", { style: "currency", currency: "USD" });
+    };
 
     const handleLogout = () => {
         localStorage.removeItem("token");
@@ -182,31 +197,19 @@ export default function OrgDashboardPage() {
         }
     };
 
-    // ── Weight modal handlers ──────────────────────────────────────
-    const openWeightModal = (r: RepoConfig) => {
-        setWeightModal({ open: true, repoName: r.name, weights: { ...r.weights } });
-    };
+    // ── Unified Modal Handlers ─────────────────────────────────────
+    const openEditModal = async (r: RepoConfig) => {
+        setEditModal({
+            open: true,
+            repoName: r.name,
+            weights: { ...r.weights },
+            targetBranches: [...(r.targetBranches || [])],
+            bountyPool: r.bountyPool || 100,
+            availableBranches: [],
+            loadingBranches: true,
+            error: ""
+        });
 
-    const saveWeights = async () => {
-        const sum = Object.values(weightModal.weights).reduce((a, b) => a + b, 0);
-        if (Math.abs(sum - 1) > 0.001) return; // guard — button is disabled anyway
-        try {
-            const res = await fetch(
-                `http://localhost:5000/api/org/repositories/${encodeURIComponent(weightModal.repoName)}/weights`,
-                { method: "PUT", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-                  body: JSON.stringify(weightModal.weights) }
-            );
-            const data = await res.json();
-            if (data.success) {
-                setRepos(Array.isArray(data.repositories) ? data.repositories : []);
-                setWeightModal(prev => ({ ...prev, open: false }));
-            }
-        } catch (e) { console.error(e); }
-    };
-
-    // ── Branch modal handlers ──────────────────────────────────────
-    const openBranchModal = async (r: RepoConfig) => {
-        setBranchModal({ open: true, repoName: r.name, available: [], selected: [...r.targetBranches], loadingBranches: true, error: "" });
         try {
             const res = await fetch(
                 `http://localhost:5000/api/org/repositories/${encodeURIComponent(r.name)}/branches`,
@@ -214,35 +217,45 @@ export default function OrgDashboardPage() {
             );
             const data = await res.json();
             if (data.success) {
-                setBranchModal(prev => ({ ...prev, available: data.branches, loadingBranches: false }));
+                setEditModal(prev => ({ ...prev, availableBranches: data.branches, loadingBranches: false }));
             } else {
-                setBranchModal(prev => ({ ...prev, loadingBranches: false, error: data.error || "Failed to fetch branches" }));
+                setEditModal(prev => ({ ...prev, loadingBranches: false, error: data.error || "Failed to fetch branches" }));
             }
         } catch (e) {
-            setBranchModal(prev => ({ ...prev, loadingBranches: false, error: "Network error fetching branches" }));
+            setEditModal(prev => ({ ...prev, loadingBranches: false, error: "Network error fetching branches" }));
         }
     };
 
     const toggleBranch = (branch: string) => {
-        setBranchModal(prev => ({
+        setEditModal(prev => ({
             ...prev,
-            selected: prev.selected.includes(branch)
-                ? prev.selected.filter(b => b !== branch)
-                : [...prev.selected, branch]
+            targetBranches: prev.targetBranches.includes(branch)
+                ? prev.targetBranches.filter(b => b !== branch)
+                : [...prev.targetBranches, branch]
         }));
     };
 
-    const saveBranches = async () => {
+    const saveRepoConfig = async () => {
+        const sum = Object.values(editModal.weights).reduce((a, b) => a + b, 0);
+        if (Math.abs(sum - 1) > 0.001) return;
+        
         try {
             const res = await fetch(
-                `http://localhost:5000/api/org/repositories/${encodeURIComponent(branchModal.repoName)}/branches`,
-                { method: "PUT", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-                  body: JSON.stringify({ targetBranches: branchModal.selected }) }
+                `http://localhost:5000/api/org/repositories/${encodeURIComponent(editModal.repoName)}/config`,
+                { 
+                    method: "PUT", 
+                    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+                    body: JSON.stringify({
+                        weights: editModal.weights,
+                        targetBranches: editModal.targetBranches,
+                        bountyPool: editModal.bountyPool
+                    }) 
+                }
             );
             const data = await res.json();
             if (data.success) {
                 setRepos(Array.isArray(data.repositories) ? data.repositories : []);
-                setBranchModal(prev => ({ ...prev, open: false }));
+                setEditModal(prev => ({ ...prev, open: false }));
             }
         } catch (e) { console.error(e); }
     };
@@ -258,170 +271,139 @@ export default function OrgDashboardPage() {
     const safeContributors = Array.isArray(contributors) ? contributors : [];
     const safeRecentEvents = Array.isArray(recentEvents) ? recentEvents : [];
     const totalScoreAvg = safeContributors.length > 0 ? (safeContributors.reduce((acc, c) => acc + c.totalScore, 0) / safeContributors.length).toFixed(1) : "0";
-    const totalFlowPool = safeContributors.reduce((acc, c) => acc + (c.totalScore * 5), 0);
+    const totalAllocatedPool = repos.reduce((acc, r) => acc + (r.bountyPool || 100), 0);
+    const totalPayout = safeContributors.reduce((acc, c) => acc + (c.totalScore * 5), 0);
 
     /* ── Weight sum for live validation ── */
-    const weightSum = Object.values(weightModal.weights).reduce((a, b) => a + b, 0);
+    const weightSum = Object.values(editModal.weights).reduce((a, b) => a + b, 0);
     const weightSumOk = Math.abs(weightSum - 1) <= 0.001;
 
     return (
       <>
-        {/* ══════════════ Weight Modal ══════════════ */}
-        {weightModal.open && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setWeightModal(p => ({ ...p, open: false }))}>
-                <div className="bg-card border border-border rounded-[2rem] p-8 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                                <SlidersHorizontal className="w-5 h-5 text-primary" />
+        {/* ══════════════ Unified Repo Edit Modal ══════════════ */}
+        {editModal.open && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4" onClick={() => setEditModal(p => ({ ...p, open: false }))}>
+                <div className="bg-card border border-border rounded-[2.5rem] p-8 w-full max-w-2xl shadow-2xl max-h-[90vh] overflow-y-auto scrollbar-hide" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-between mb-8">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20">
+                                <SlidersHorizontal className="w-6 h-6 text-primary" />
                             </div>
                             <div>
-                                <h2 className="text-lg font-black">Edit Algo Weights</h2>
-                                <p className="text-[10px] text-muted-foreground font-mono">{weightModal.repoName}</p>
+                                <h2 className="text-2xl font-black tracking-tight">Edit Repo Config</h2>
+                                <p className="text-xs text-muted-foreground font-mono uppercase tracking-widest">{editModal.repoName}</p>
                             </div>
                         </div>
-                        <button onClick={() => setWeightModal(p => ({ ...p, open: false }))} className="p-2 rounded-xl hover:bg-muted transition-colors">
-                            <X className="w-4 h-4" />
+                        <button onClick={() => setEditModal(p => ({ ...p, open: false }))} className="p-3 rounded-2xl hover:bg-muted transition-colors">
+                            <X className="w-5 h-5" />
                         </button>
                     </div>
 
-                    <div className="space-y-3 mb-6">
-                        {WEIGHT_KEYS.map(key => (
-                            <div key={key} className="flex items-center gap-4">
-                                <label className="text-xs font-black text-muted-foreground uppercase tracking-widest w-20 shrink-0 capitalize">{key}</label>
-                                <div className="flex-1 relative">
-                                    <input
-                                        type="number" step="0.01" min="0" max="1"
-                                        value={weightModal.weights[key]}
-                                        onChange={e => setWeightModal(prev => ({
-                                            ...prev,
-                                            weights: { ...prev.weights, [key]: parseFloat(e.target.value) || 0 }
-                                        }))}
-                                        className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm font-mono font-bold focus:outline-none focus:border-primary/60 transition-colors"
-                                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10">
+                        {/* Section 1: Branches & Bounty */}
+                        <div className="space-y-8">
+                            <div>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <GitBranch className="w-4 h-4 text-primary" />
+                                    <h3 className="text-xs font-black text-muted-foreground uppercase tracking-widest">Target Branches</h3>
                                 </div>
-                                <div className="w-10 text-right">
-                                    <div className="h-1.5 bg-muted rounded-full overflow-hidden w-10">
-                                        <div className="bg-primary h-full rounded-full transition-all" style={{ width: `${Math.min(weightModal.weights[key] * 100, 100)}%` }} />
+                                {editModal.loadingBranches ? (
+                                    <div className="flex items-center gap-3 py-4 text-sm text-muted-foreground">
+                                        <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                                        Fetching branches...
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 scrollbar-thin">
+                                        {(editModal.availableBranches.length > 0 ? editModal.availableBranches : editModal.targetBranches).map(branch => {
+                                            const selected = editModal.targetBranches.includes(branch);
+                                            return (
+                                                <button
+                                                    key={branch}
+                                                    onClick={() => toggleBranch(branch)}
+                                                    className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl border font-mono text-xs font-bold transition-all ${selected ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-background border-border text-foreground hover:border-primary/30'}`}
+                                                >
+                                                    {branch}
+                                                    {selected && <Check className="w-3.5 h-3.5" />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <div className="flex items-center gap-2 mb-4">
+                                    <Wallet className="w-4 h-4 text-primary" />
+                                    <h3 className="text-xs font-black text-muted-foreground uppercase tracking-widest">Bounty Pool (FLOW)</h3>
+                                </div>
+                                <div className="relative">
+                                    <input
+                                        type="number"
+                                        value={editModal.bountyPool}
+                                        onChange={e => setEditModal(prev => ({ ...prev, bountyPool: parseFloat(e.target.value) || 0 }))}
+                                        className="w-full bg-background border border-border rounded-2xl px-5 py-4 text-xl font-mono font-black focus:outline-none focus:border-primary/50 transition-all"
+                                    />
+                                    <div className="absolute right-5 top-1/2 -translate-y-1/2 text-xs font-black text-muted-foreground bg-muted/30 px-3 py-1 rounded-lg border border-border">
+                                        FLOW
                                     </div>
                                 </div>
+                                <p className="text-[10px] text-muted-foreground mt-2 font-mono uppercase tracking-widest px-1">
+                                    Equivalent to ~{formatUSD(editModal.bountyPool)} USD
+                                </p>
                             </div>
-                        ))}
-                    </div>
-
-                    {/* Live sum indicator */}
-                    <div className={`flex items-center justify-between p-3 rounded-xl mb-6 border transition-colors ${weightSumOk ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-destructive/10 border-destructive/30'}`}>
-                        <div className="flex items-center gap-2">
-                            {weightSumOk
-                                ? <Check className="w-4 h-4 text-emerald-500" />
-                                : <AlertCircle className="w-4 h-4 text-destructive" />
-                            }
-                            <span className="text-xs font-black uppercase tracking-widest">
-                                {weightSumOk ? "Weights valid" : `Must sum to 1.00`}
-                            </span>
                         </div>
-                        <span className={`text-sm font-black font-mono ${weightSumOk ? 'text-emerald-500' : 'text-destructive'}`}>
-                            {weightSum.toFixed(3)}
-                        </span>
+
+                        {/* Section 2: Algo Weights */}
+                        <div>
+                            <div className="flex items-center gap-2 mb-6">
+                                <Zap className="w-4 h-4 text-primary" />
+                                <h3 className="text-xs font-black text-muted-foreground uppercase tracking-widest">Algo Weights</h3>
+                            </div>
+                            <div className="space-y-4">
+                                {WEIGHT_KEYS.map(key => (
+                                    <div key={key} className="space-y-1.5">
+                                        <div className="flex justify-between items-center">
+                                            <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest capitalize">{key}</label>
+                                            <span className="text-[10px] font-black font-mono">{editModal.weights[key].toFixed(2)}</span>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                type="range" min="0" max="1" step="0.01"
+                                                value={editModal.weights[key]}
+                                                onChange={e => setEditModal(prev => ({
+                                                    ...prev,
+                                                    weights: { ...prev.weights, [key]: parseFloat(e.target.value) || 0 }
+                                                }))}
+                                                className="flex-1 accent-primary"
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className={`mt-8 flex items-center justify-between p-4 rounded-2xl border transition-all ${weightSumOk ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-destructive/10 border-destructive/20'}`}>
+                                <div className="flex items-center gap-2">
+                                    {weightSumOk ? <Check className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-destructive" />}
+                                    <span className="text-[10px] font-black uppercase tracking-widest">
+                                        {weightSumOk ? "Balanced" : `Sum: ${weightSum.toFixed(2)} / 1.00`}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div className="flex gap-3">
-                        <button onClick={() => setWeightModal(p => ({ ...p, open: false }))} className="flex-1 py-3 rounded-xl border border-border font-bold text-sm hover:bg-muted transition-colors">
+                    <div className="flex gap-4">
+                        <button onClick={() => setEditModal(p => ({ ...p, open: false }))} className="flex-1 py-4 rounded-2xl border border-border font-bold text-sm hover:bg-muted transition-colors uppercase tracking-widest">
                             Cancel
                         </button>
                         <button
-                            onClick={saveWeights}
+                            onClick={saveRepoConfig}
                             disabled={!weightSumOk}
-                            className="flex-1 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="flex-1 py-4 rounded-2xl bg-primary text-primary-foreground font-black text-sm hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed uppercase tracking-widest shadow-glow-sm"
                         >
-                            Save Weights
+                            Save Configuration
                         </button>
                     </div>
-                </div>
-            </div>
-        )}
-
-        {/* ══════════════ Branch Picker Modal ══════════════ */}
-        {branchModal.open && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setBranchModal(p => ({ ...p, open: false }))}>
-                <div className="bg-card border border-border rounded-[2rem] p-8 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-                    <div className="flex items-center justify-between mb-6">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                                <GitBranch className="w-5 h-5 text-primary" />
-                            </div>
-                            <div>
-                                <h2 className="text-lg font-black">Target Branches</h2>
-                                <p className="text-[10px] text-muted-foreground font-mono">{branchModal.repoName}</p>
-                            </div>
-                        </div>
-                        <button onClick={() => setBranchModal(p => ({ ...p, open: false }))} className="p-2 rounded-xl hover:bg-muted transition-colors">
-                            <X className="w-4 h-4" />
-                        </button>
-                    </div>
-
-                    {branchModal.loadingBranches ? (
-                        <div className="flex flex-col items-center gap-3 py-10">
-                            <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                            <p className="text-sm text-muted-foreground">Fetching branches from GitHub...</p>
-                        </div>
-                    ) : branchModal.error ? (
-                        <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-xl mb-6">
-                            <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
-                            <p className="text-sm text-destructive font-medium">{branchModal.error}</p>
-                        </div>
-                    ) : (
-                        <>
-                            <p className="text-xs text-muted-foreground mb-3 font-medium">
-                                Select branches to track for contribution scoring. PRs merged into these branches will be counted.
-                            </p>
-                            <div className="space-y-2 max-h-60 overflow-y-auto pr-1 mb-6 scrollbar-thin">
-                                {branchModal.available.map(branch => {
-                                    const selected = branchModal.selected.includes(branch);
-                                    return (
-                                        <button
-                                            key={branch}
-                                            onClick={() => toggleBranch(branch)}
-                                            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border font-mono text-sm font-bold transition-all ${selected ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-background border-border text-foreground hover:border-primary/30'}`}
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <GitBranch className="w-3.5 h-3.5 opacity-60" />
-                                                {branch}
-                                            </div>
-                                            {selected && <Check className="w-4 h-4" />}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-
-                            <div className="flex items-center gap-2 mb-4 flex-wrap">
-                                {branchModal.selected.length === 0
-                                    ? <span className="text-xs text-muted-foreground italic">No branches selected</span>
-                                    : branchModal.selected.map(b => (
-                                        <span key={b} className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-lg text-[10px] font-bold font-mono flex items-center gap-1">
-                                            {b}
-                                            <button onClick={() => toggleBranch(b)} className="hover:text-destructive transition-colors"><X className="w-2.5 h-2.5" /></button>
-                                        </span>
-                                    ))
-                                }
-                            </div>
-                        </>
-                    )}
-
-                    {!branchModal.loadingBranches && (
-                        <div className="flex gap-3">
-                            <button onClick={() => setBranchModal(p => ({ ...p, open: false }))} className="flex-1 py-3 rounded-xl border border-border font-bold text-sm hover:bg-muted transition-colors">
-                                Cancel
-                            </button>
-                            <button
-                                onClick={saveBranches}
-                                disabled={branchModal.selected.length === 0}
-                                className="flex-1 py-3 rounded-xl bg-primary text-primary-foreground font-bold text-sm hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                Save Branches
-                            </button>
-                        </div>
-                    )}
                 </div>
             </div>
         )}
@@ -470,7 +452,10 @@ export default function OrgDashboardPage() {
                             <Wallet className="w-5 h-5" />
                         </div>
                     </div>
-                    <div className="text-3xl font-black font-mono">{totalFlowPool.toLocaleString()} FLOW</div>
+                    <div className="flex flex-col">
+                        <div className="text-3xl font-black font-mono">{totalAllocatedPool.toLocaleString()} FLOW</div>
+                        <div className="text-xs font-bold text-muted-foreground mt-0.5">{formatUSD(totalAllocatedPool)} USD</div>
+                    </div>
                     <div className="text-sm text-emerald-500 font-medium mt-1 flex items-center gap-1">
                         <TrendingUp className="w-4 h-4" />
                         Verified Rewards
@@ -539,49 +524,56 @@ export default function OrgDashboardPage() {
                             {repos.map(r => (
                                 <div key={r.name} className="p-6 bg-muted/10 border border-border rounded-2xl flex flex-col gap-4">
                                     {/* Repo name header */}
-                                    <div className="flex items-center justify-between border-b border-border pb-3">
-                                        <div className="flex items-center gap-2">
-                                            <Github className="w-4 h-4 text-muted-foreground" />
-                                            <span className="text-lg font-bold font-mono text-foreground">{r.name}</span>
+                                    <div className="flex items-center justify-between border-b border-border pb-4 mb-2">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center shadow-sm">
+                                                <Github className="w-4 h-4 text-muted-foreground" />
+                                            </div>
+                                            <span className="text-xl font-black font-mono text-foreground">{r.name}</span>
                                         </div>
+                                        <button
+                                            onClick={() => openEditModal(r)}
+                                            className="flex items-center gap-2 text-[10px] font-black text-primary bg-primary/10 border border-primary/20 px-4 py-2 rounded-xl hover:bg-primary hover:text-primary-foreground transition-all uppercase tracking-widest shadow-sm"
+                                        >
+                                            <SlidersHorizontal className="w-3.5 h-3.5" /> Edit Config
+                                        </button>
                                     </div>
 
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                         {/* Target Branches */}
-                                        <div className="p-4 bg-background border border-border rounded-xl flex flex-col gap-3">
-                                            <div className="flex items-center justify-between">
-                                                <h3 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Target Branches</h3>
-                                                <button
-                                                    onClick={() => openBranchModal(r)}
-                                                    className="flex items-center gap-1.5 text-[10px] font-black text-primary bg-primary/10 border border-primary/20 px-3 py-1.5 rounded-lg hover:bg-primary hover:text-primary-foreground transition-colors uppercase tracking-widest"
-                                                >
-                                                    <GitBranch className="w-3 h-3" /> Edit
-                                                </button>
-                                            </div>
+                                        <div className="p-4 bg-background border border-border rounded-2xl flex flex-col gap-3">
+                                            <h3 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                                                <GitBranch className="w-3 h-3" /> Branches
+                                            </h3>
                                             <div className="flex flex-wrap gap-1.5 min-h-[28px]">
                                                 {r.targetBranches.length > 0 ? r.targetBranches.map(b => (
                                                     <span key={b} className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-lg text-[10px] font-bold font-mono">{b}</span>
                                                 )) : (
-                                                    <span className="text-[10px] text-muted-foreground italic">No branches set — click Edit</span>
+                                                    <span className="text-[10px] text-muted-foreground italic">No branches tracked</span>
                                                 )}
                                             </div>
                                         </div>
 
-                                        {/* Algo Weights */}
-                                        <div className="p-4 bg-background border border-border rounded-xl flex flex-col gap-3">
-                                            <div className="flex items-center justify-between">
-                                                <h3 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Algo Weights</h3>
-                                                <button
-                                                    onClick={() => openWeightModal(r)}
-                                                    className="flex items-center gap-1.5 text-[10px] font-black text-primary bg-primary/10 border border-primary/20 px-3 py-1.5 rounded-lg hover:bg-primary hover:text-primary-foreground transition-colors uppercase tracking-widest"
-                                                >
-                                                    <SlidersHorizontal className="w-3 h-3" /> Edit
-                                                </button>
+                                        {/* Bounty Pool */}
+                                        <div className="p-4 bg-background border border-border rounded-2xl flex flex-col gap-3">
+                                            <h3 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                                                <Wallet className="w-3 h-3" /> Bounty Pool
+                                            </h3>
+                                            <div>
+                                                <div className="text-lg font-black font-mono text-foreground leading-none">{(r.bountyPool || 100).toLocaleString()} FLOW</div>
+                                                <div className="text-[10px] font-bold text-muted-foreground mt-1">{formatUSD(r.bountyPool || 100)} USD</div>
                                             </div>
+                                        </div>
+
+                                        {/* Algo Weights */}
+                                        <div className="p-4 bg-background border border-border rounded-2xl flex flex-col gap-3">
+                                            <h3 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                                                <Zap className="w-3 h-3" /> Weights
+                                            </h3>
                                             <div className="space-y-1">
                                                 {Object.entries(r.weights).map(([k, v]) => (
                                                     <div key={k} className="flex items-center gap-2">
-                                                        <span className="text-[9px] font-black text-muted-foreground uppercase w-14 shrink-0">{k}</span>
+                                                        <span className="text-[9px] font-black text-muted-foreground uppercase w-14 shrink-0">{k.substring(0,3)}</span>
                                                         <div className="flex-1 bg-muted rounded-full h-1 overflow-hidden">
                                                             <div className="bg-primary h-full rounded-full" style={{ width: `${(v as number) * 100}%` }} />
                                                         </div>
@@ -730,7 +722,12 @@ export default function OrgDashboardPage() {
                                                     <span className="text-xs font-black font-mono">{c.totalScore}</span>
                                                 </div>
                                             </td>
-                                            <td className="px-8 py-6 font-mono font-black text-emerald-500">{Math.round(c.totalScore * 5)} FLOW</td>
+                                            <td className="px-8 py-6">
+                                                <div className="flex flex-col">
+                                                    <span className="font-mono font-black text-emerald-500">{Math.round(c.totalScore * 5)} FLOW</span>
+                                                    <span className="text-[10px] font-bold text-muted-foreground mt-0.5">{formatUSD(Math.round(c.totalScore * 5))} USD</span>
+                                                </div>
+                                            </td>
                                             <td className="px-8 py-6 text-right">
                                                 <div className="flex items-center justify-end gap-1.5 text-[9px] text-primary font-black uppercase tracking-widest bg-primary/10 px-3 py-1.5 rounded-xl border border-primary/20 inline-flex group-hover:scale-105 transition-transform">
                                                     <ShieldCheck className="w-3 h-3" />
@@ -776,7 +773,7 @@ export default function OrgDashboardPage() {
                             </div>
 
                             <p className="text-sm text-white/50 mb-8 leading-relaxed font-medium">
-                                Multi-sig required to stream <span className="text-primary font-black">{totalFlowPool.toLocaleString()} FLOW</span>. Transaction builds upon <span className="underline decoration-primary/50 underline-offset-4 decoration-2">Algorithmic Valuation Snapshot #421</span>.
+                                Multi-sig required to stream <span className="text-primary font-black">{totalPayout.toLocaleString()} FLOW</span> (~{formatUSD(totalPayout)} USD). Transaction builds upon <span className="underline decoration-primary/50 underline-offset-4 decoration-2">Algorithmic Valuation Snapshot #421</span>.
                             </p>
 
                             <button onClick={handleExecutePayout} disabled={isExecutingPayout} className="w-full bg-primary text-primary-foreground font-black py-4 rounded-[1.25rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2">
