@@ -1,6 +1,8 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import User from '../models/User.js';
+import { proposePayout } from '../services/flowService.js';
 
 const router = express.Router();
 
@@ -173,24 +175,30 @@ router.put('/repositories/:repoId/branches', authenticateToken, async (req, res)
 });
 
 /**
- * PUT /api/org/repositories/:repoId/weights
+ * PUT /api/org/repositories/:repoId/config
+ * Update multiple repo settings at once
  */
-router.put('/repositories/:repoId/weights', authenticateToken, async (req, res) => {
+router.put('/repositories/:repoId/config', authenticateToken, async (req, res) => {
     try {
         const repoName = decodeURIComponent(req.params.repoId);
-        const { impact, complexity, quality, review, priority } = req.body;
-        
+        const { targetBranches, weights, bountyPool } = req.body;
+
         const user = await User.findById(req.user.id);
         const repo = user.repositories.find(r => r.name === repoName);
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
-        
-        repo.weights = {
-            impact: impact ?? repo.weights.impact,
-            complexity: complexity ?? repo.weights.complexity,
-            quality: quality ?? repo.weights.quality,
-            review: review ?? repo.weights.review,
-            priority: priority ?? repo.weights.priority
-        };
+
+        if (targetBranches) repo.targetBranches = targetBranches;
+        if (weights) {
+            repo.weights = {
+                impact: weights.impact ?? repo.weights.impact,
+                complexity: weights.complexity ?? repo.weights.complexity,
+                quality: weights.quality ?? repo.weights.quality,
+                review: weights.review ?? repo.weights.review,
+                priority: weights.priority ?? repo.weights.priority
+            };
+        }
+        if (typeof bountyPool === 'number') repo.bountyPool = bountyPool;
+
         await user.save();
         res.json({ success: true, repositories: user.repositories });
     } catch (error) {
@@ -199,3 +207,35 @@ router.put('/repositories/:repoId/weights', authenticateToken, async (req, res) 
 });
 
 export default router;
+
+/**
+ * POST /api/org/payout/execute
+ * Propose payouts on the Flow blockchain for all contributors 
+ */
+router.post('/payout/execute', authenticateToken, async (req, res) => {
+    try {
+        const { contributors } = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
+        
+        if (!contributors || contributors.length === 0) {
+            return res.status(400).json({ error: 'No contributors found to payout.' });
+        }
+
+        const fallbackWallet = process.env.FLOW_ADDRESS || "0x01cf0e2f2f715450";
+        const results = [];
+        
+        for (const c of contributors) {
+            const amount = c.totalScore * 5; // 5 FLOW per pt (as defined in frontend)
+            if (amount <= 0) continue;
+
+            const userDoc = await User.findOne({ github: c.username });
+            const wallet = userDoc?.wallet || fallbackWallet;
+
+            const txResult = await proposePayout(wallet, amount);
+            results.push({ username: c.username, amount, txResult });
+        }
+
+        res.json({ success: true, results });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error', message: error.message });
+    }
+});

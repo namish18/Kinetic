@@ -34,7 +34,8 @@ const userSchema = new mongoose.Schema({
             quality: { type: Number, default: 0.2 },
             review: { type: Number, default: 0.2 },
             priority: { type: Number, default: 0.2 }
-        }
+        },
+        bountyPool: { type: Number, default: 100 }
     }],
 
     createdAt: { type: Date, default: Date.now },
