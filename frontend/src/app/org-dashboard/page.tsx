@@ -110,6 +110,17 @@ export default function OrgDashboardPage() {
         error: ""
     });
 
+    const [resultModal, setResultModal] = useState<{
+        open: boolean;
+        success: boolean;
+        message: string;
+        results?: any[];
+    }>({
+        open: false,
+        success: false,
+        message: "",
+    });
+
     const FLOW_TO_USD = 0.02874;
 
     const formatUSD = (flow: number) => {
@@ -185,13 +196,26 @@ export default function OrgDashboardPage() {
             });
             const data = await res.json();
             if (data.success) {
-                alert(`Successfully executed payouts on Flow network for ${data.results.length} contributors!`);
+                setResultModal({
+                    open: true,
+                    success: true,
+                    message: `Successfully executed payouts for ${data.results.length} contributors on Flow network!`,
+                    results: data.results
+                });
             } else {
-                alert("Execution failed: " + data.error);
+                setResultModal({
+                    open: true,
+                    success: false,
+                    message: "Execution failed: " + (data.error || "Unknown error")
+                });
             }
         } catch (e) {
             console.error(e);
-            alert("Execution failed due to network error.");
+            setResultModal({
+                open: true,
+                success: false,
+                message: "Execution failed due to network error."
+            });
         } finally {
             setIsExecutingPayout(false);
         }
@@ -402,6 +426,52 @@ export default function OrgDashboardPage() {
                             className="flex-1 py-4 rounded-2xl bg-primary text-primary-foreground font-black text-sm hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed uppercase tracking-widest shadow-glow-sm"
                         >
                             Save Configuration
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+        
+        {/* ══════════════ Result Modal ══════════════ */}
+        {resultModal.open && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4" onClick={() => setResultModal(p => ({ ...p, open: false }))}>
+                <div className="bg-card border border-border rounded-[2.5rem] p-8 w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <div className="flex flex-col items-center text-center">
+                        <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mb-6 border ${resultModal.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-destructive/10 border-destructive/20 text-destructive'}`}>
+                            {resultModal.success ? <CheckCircle className="w-10 h-10" /> : <AlertCircle className="w-10 h-10" />}
+                        </div>
+                        
+                        <h2 className="text-2xl font-black tracking-tight mb-2">
+                            {resultModal.success ? "Transaction Success" : "Execution Failed"}
+                        </h2>
+                        <p className="text-muted-foreground text-sm mb-8 px-4 leading-relaxed">
+                            {resultModal.message}
+                        </p>
+
+                        {resultModal.results && resultModal.results.length > 0 && (
+                            <div className="w-full space-y-3 mb-8 max-h-48 overflow-y-auto pr-2 scrollbar-thin">
+                                {resultModal.results.map((r, i) => (
+                                    <div key={i} className="flex items-center justify-between p-4 bg-muted/20 border border-border rounded-2xl">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center font-bold text-[10px]">
+                                                {r.username.slice(0, 2).toUpperCase()}
+                                            </div>
+                                            <span className="text-sm font-bold">@{r.username}</span>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="text-xs font-black font-mono text-emerald-500">{r.amount} FLOW</div>
+                                            {r.txResult?.success && <div className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest mt-0.5">Sealed</div>}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <button 
+                            onClick={() => setResultModal(p => ({ ...p, open: false }))}
+                            className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-black text-sm hover:opacity-90 transition-all uppercase tracking-widest shadow-glow-sm"
+                        >
+                            Complete Settlement
                         </button>
                     </div>
                 </div>
