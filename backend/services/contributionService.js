@@ -251,3 +251,27 @@ export async function computeOrgContributors(orgId, token) {
         return { contributors: [], recentEvents: [] };
     }
 }
+import { calculateSpamPenalty } from './kineticMechanisms.js';
+
+// Inside your main contribution evaluation function:
+export function computeContributionScore(prData, contributorHistory = []) {
+  // 1. Extract PR Timestamps
+  const prTimestamps = contributorHistory.map(pr => pr.createdAt || pr.submittedAt);
+  prTimestamps.push(prData.createdAt || new Date());
+
+  // 2. Compute Velocity Spam Penalty
+  const spamPenalty = calculateSpamPenalty(prTimestamps);
+
+  // 3. Compute Base MSTS Score components
+  const baseScore = (prData.additions + prData.deletions) * 0.1; // Example base metric
+  const reputationMultiplier = 1.0; // Dynamic reputation layer
+
+  // 4. Calculate Final Score: (Base * Rep) * Penalty
+  const finalScore = Number((baseScore * reputationMultiplier * spamPenalty).toFixed(4));
+
+  return {
+    finalScore,
+    spamPenalty,
+    isSpamFlagged: spamPenalty < 0.8
+  };
+}
