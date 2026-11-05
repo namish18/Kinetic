@@ -1,4 +1,4 @@
-import 'dotenv/config'; // Loads .env variables immediately before other imports
+import 'dotenv/config';
 
 import express from 'express';
 import cors from 'cors';
@@ -6,17 +6,14 @@ import passport from 'passport';
 import session from 'express-session';
 import connectDB from './config/connectdb.js';
 
-// Passport config (now reads loaded env vars safely)
 import './config/passport.js';
 
-// Route Handlers
 import authRoutes from './routes/auth.js';
 import contributionRoutes from './routes/contribution.js';
 import kineticRoutes from './routes/kinetic.js';
 import repoRoutes from './routes/repo.js';
 import webhookRoutes from './routes/webhook.js';
 
-// Connect Database
 connectDB();
 
 const app = express();
@@ -29,7 +26,14 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
+
 app.use(express.urlencoded({ extended: true }));
 app.use(
   cors({
@@ -52,6 +56,12 @@ app.get('/health', (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-});
+
+// Only start the HTTP listener if server.js is executed directly (prevents port conflicts during jest testing)
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  });
+}
+
+export default app;
