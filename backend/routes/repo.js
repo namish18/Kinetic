@@ -19,7 +19,7 @@ function authenticateToken(req, res, next) {
     }
 }
 
-import { computeOrgContributors } from '../services/contributionService.js';
+import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
 
 /**
  * GET /api/org/all
@@ -36,6 +36,7 @@ router.get('/all', async (req, res) => {
                     owner: u.github,
                     ownerAvatar: u.avatarUrl || `https://github.com/${u.github}.png`,
                     weights: r.weights,
+                    reputationWeights: r.reputationWeights || DEFAULT_REPUTATION_WEIGHTS,
                     totalPool: 1000 + (r.name.length * 50), // Semi-stable pool
                     activePRs: 5 + (r.name.length % 5)
                 });
@@ -106,7 +107,8 @@ router.post('/repositories', authenticateToken, async (req, res) => {
             user.repositories.push({
                 name: repoName,
                 targetBranches: ['main'],
-                weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 }
+                weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 },
+                reputationWeights: DEFAULT_REPUTATION_WEIGHTS
             });
             await user.save();
         }
@@ -181,7 +183,7 @@ router.put('/repositories/:repoId/branches', authenticateToken, async (req, res)
 router.put('/repositories/:repoId/config', authenticateToken, async (req, res) => {
     try {
         const repoName = decodeURIComponent(req.params.repoId);
-        const { targetBranches, weights, bountyPool } = req.body;
+        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
 
         const user = await User.findById(req.user.id);
         const repo = user.repositories.find(r => r.name === repoName);
@@ -195,6 +197,14 @@ router.put('/repositories/:repoId/config', authenticateToken, async (req, res) =
                 quality: weights.quality ?? repo.weights.quality,
                 review: weights.review ?? repo.weights.review,
                 priority: weights.priority ?? repo.weights.priority
+            };
+        }
+        if (reputationWeights) {
+            repo.reputationWeights = {
+                alpha: reputationWeights.alpha ?? repo.reputationWeights?.alpha ?? DEFAULT_REPUTATION_WEIGHTS.alpha,
+                beta: reputationWeights.beta ?? repo.reputationWeights?.beta ?? DEFAULT_REPUTATION_WEIGHTS.beta,
+                gamma: reputationWeights.gamma ?? repo.reputationWeights?.gamma ?? DEFAULT_REPUTATION_WEIGHTS.gamma,
+                delta: reputationWeights.delta ?? repo.reputationWeights?.delta ?? DEFAULT_REPUTATION_WEIGHTS.delta
             };
         }
         if (typeof bountyPool === 'number') repo.bountyPool = bountyPool;

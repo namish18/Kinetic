@@ -23,6 +23,22 @@ const userSchema = new mongoose.Schema({
 
     // Role and Organization-specific data
     role: { type: String, enum: ['contributor', 'organization'], default: 'contributor' },
+
+    // Contributor historical reputation (MSTS-03)
+    reputation: { type: Number, default: 0 },
+    reputationEvidence: {
+        acceptedPRs: { type: Number, default: 0 },
+        avgReviewScore: { type: Number, default: 0 },
+        historicalImpact: { type: Number, default: 0 },
+        consistency: { type: Number, default: 0 },
+        lastCalculated: { type: Date }
+    },
+    reputationWeights: {
+        alpha: { type: Number, default: 10 },
+        beta: { type: Number, default: 25 },
+        gamma: { type: Number, default: 30 },
+        delta: { type: Number, default: 20 }
+    },
     
     // Repositories are now objects with specific configurations
     repositories: [{
@@ -34,6 +50,12 @@ const userSchema = new mongoose.Schema({
             quality: { type: Number, default: 0.2 },
             review: { type: Number, default: 0.2 },
             priority: { type: Number, default: 0.2 }
+        },
+        reputationWeights: {
+            alpha: { type: Number, default: 10 },
+            beta: { type: Number, default: 25 },
+            gamma: { type: Number, default: 30 },
+            delta: { type: Number, default: 20 }
         },
         bountyPool: { type: Number, default: 100 }
     }],

@@ -1,6 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
-import { extractPRMetrics, calculatePRScore } from '../services/contributionService.js';
+import { extractPRMetrics, calculatePRScore, getContributorReputation } from '../services/contributionService.js';
 import { proposePayout } from '../services/flowService.js';
 
 const router = express.Router();
@@ -54,9 +54,30 @@ router.post('/github', async (req, res) => {
             // Calculate payout based on true PR dimensions
             const prMetrics = extractPRMetrics(payload.pull_request);
             
-            // Execute the explicit algorithm from contribution_algo.md
+            // Retrieve contributor reputation from DB or compute from historical evidence (MSTS-03)
+            const contributorUser = await User.findOne({ github: contributorUsername });
+            let contributorReputation = 0;
+
+            if (contributorUser && typeof contributorUser.reputation === 'number' && contributorUser.reputation > 0) {
+                contributorReputation = contributorUser.reputation;
+            } else {
+                const repResult = await getContributorReputation(
+                    contributorUsername, 
+                    process.env.GITHUB_PAT, 
+                    repoConfig.reputationWeights
+                );
+                contributorReputation = repResult.reputation;
+
+                if (contributorUser) {
+                    contributorUser.reputation = contributorReputation;
+                    contributorUser.reputationEvidence = repResult.evidence;
+                    await contributorUser.save().catch(e => console.warn('Webhook user reputation save failed:', e.message));
+                }
+            }
+
+            // Execute the explicit algorithm from contribution_algo.md with historical reputation
             const result = calculatePRScore(prMetrics, repoConfig.weights, { 
-                reputation: 100 // TODO: fetch real contributor reputation from DB
+                reputation: contributorReputation
             });
 
             // result.score is in [0, ~1.5] range; map to 0-100 display score
@@ -67,13 +88,10 @@ router.post('/github', async (req, res) => {
             const MAX_FLOW_PER_PR = 10.0;
             const estPayoutFlow = Math.min(MAX_FLOW_PER_PR, Math.round(result.score * FLOW_PER_POINT * 1000) / 1000);
             
-            console.log(`Webhook: Payout calculated for ${contributorUsername} -> Score: ${finalScore}, Est payout: ${estPayoutFlow} FLOW\n`);
+            console.log(`Webhook: Payout calculated for ${contributorUsername} -> Score: ${finalScore}, Reputation: ${contributorReputation}, Est payout: ${estPayoutFlow} FLOW\n`);
 
             let flowTxStatus = "skipped";
             let flowTxId = null;
-
-            // Retrieve the contributor's wallet
-            const contributorUser = await User.findOne({ github: contributorUsername });
             
             if (estPayoutFlow > 0 && contributorUser?.wallet) {
                 console.log(`Webhook: Proposing smart contract payout to contributor's wallet ${contributorUser.wallet}...`);
