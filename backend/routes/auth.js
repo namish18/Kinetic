@@ -15,10 +15,15 @@ const router = express.Router();
  * Kick off the GitHub OAuth dance
  * Accepts ?role=contributor (default) or ?role=organization
  */
+const githubOAuthScopes = (process.env.GITHUB_OAUTH_SCOPES || 'user:email,public_repo')
+    .split(',')
+    .map(scope => scope.trim())
+    .filter(Boolean);
+
 router.get('/github', (req, res, next) => {
     req.session.role = req.query.role || 'contributor';
     next();
-}, passport.authenticate('github', { scope: ['user:email'] }));
+}, passport.authenticate('github', { scope: githubOAuthScopes }));
 
 /**
  * GET /api/auth/github/callback

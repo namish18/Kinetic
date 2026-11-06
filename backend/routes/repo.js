@@ -3,6 +3,11 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
+import { decryptGitHubToken } from '../services/githubTokenService.js';
+import {
+    normalizeGitHubRepository,
+    verifyRepositoryAdminAccess,
+} from '../services/githubRepositoryAccessService.js';
 
 const router = express.Router();
 
@@ -78,16 +83,71 @@ router.get('/info', authenticateToken, async (req, res) => {
  * Accepts full GitHub URLs, github.com/owner/repo, or plain owner/repo.
  */
 function normalizeRepoName(input) {
-    // Strip protocol and domain if present
-    let cleaned = input.trim();
-    cleaned = cleaned.replace(/^https?:\/\//i, '');   // remove https:// or http://
-    cleaned = cleaned.replace(/^github\.com\//i, ''); // remove github.com/
-    cleaned = cleaned.replace(/\.git$/i, '');          // remove trailing .git
-    cleaned = cleaned.replace(/\/+$/, '');             // remove trailing slashes
-    // Now should be "owner/repo" — take only first two path segments
-    const parts = cleaned.split('/').filter(Boolean);
-    if (parts.length < 2) return cleaned; // can't normalize, return as-is
-    return `${parts[0]}/${parts[1]}`;
+    return normalizeGitHubRepository(input);
+}
+
+/**
+ * Load the authenticated organization together with its private, encrypted
+ * GitHub OAuth token. Contributors must not register or configure repositories.
+ */
+async function loadOrganizationForRepositoryWrite(req, res) {
+    const organization = await User.findById(req.user.id).select("+githubAccessTokenEncrypted");
+    if (!organization) {
+        res.status(404).json({ error: "Organization account not found" });
+        return null;
+    }
+    if (organization.role !== "organization") {
+        res.status(403).json({ error: "Only organization accounts can register or configure repositories" });
+        return null;
+    }
+    return organization;
+}
+
+/**
+ * Verify the current organization user's own GitHub admin permission.
+ * A shared server-side GITHUB_PAT is deliberately not used for this check.
+ */
+async function requireRepositoryAdminAccess(organization, repository, res) {
+    if (!process.env.GITHUB_TOKEN_ENCRYPTION_KEY) {
+        res.status(503).json({
+            error: "Repository ownership verification is not configured on this server",
+            code: "github_token_encryption_not_configured",
+        });
+        return false;
+    }
+
+    if (!organization.githubAccessTokenEncrypted) {
+        res.status(428).json({
+            error: "Reconnect GitHub to grant repository access before registering or configuring repositories",
+            code: "github_reauthorization_required",
+        });
+        return false;
+    }
+
+    let accessToken;
+    try {
+        accessToken = decryptGitHubToken(organization.githubAccessTokenEncrypted);
+    } catch (error) {
+        console.error("Unable to decrypt organization GitHub token:", error.message);
+        res.status(503).json({
+            error: "Stored GitHub authorization is unavailable. Reconnect GitHub after the server encryption key is configured.",
+            code: "github_authorization_unavailable",
+        });
+        return false;
+    }
+
+    const verification = await verifyRepositoryAdminAccess(repository, accessToken);
+    if (!verification.authorized) {
+        if (verification.retryAfter) res.set("Retry-After", verification.retryAfter);
+        res.status(verification.status).json({
+            error: verification.message,
+            code: verification.code,
+            repository: verification.repository,
+        });
+        return false;
+    }
+
+    return true;
 }
 
 /**
@@ -98,10 +158,19 @@ router.post('/repositories', authenticateToken, async (req, res) => {
         const { repository } = req.body;
         if (!repository) return res.status(400).json({ error: 'Repository name required' });
 
-        const repoName = normalizeRepoName(repository); // always store as owner/repo
+        let repoName;
+        try {
+            repoName = normalizeRepoName(repository); // always store as owner/repo
+        } catch (error) {
+            return res.status(400).json({ error: error.message, code: "invalid_repository" });
+        }
 
-        const user = await User.findById(req.user.id);
-        const exists = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        const exists = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!exists) {
             user.repositories.push({
                 name: repoName,
@@ -159,14 +228,25 @@ router.get('/repositories/:repoId/branches', authenticateToken, async (req, res)
 
 router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
     try {
-        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        let repoName;
+        try {
+            repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        } catch (error) {
+            return res.status(400).json({ error: error.message, code: "invalid_repository" });
+        }
         const { targetBranches } = req.body;
+        if (!Array.isArray(targetBranches) || targetBranches.some(branch => typeof branch !== "string" || !branch.trim())) {
+            return res.status(400).json({ error: "targetBranches must be an array of non-empty branch names" });
+        }
 
-        const user = await User.findById(req.user.id);
-        const repo = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+        const repo = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
-        
-        repo.targetBranches = targetBranches;
+
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        repo.targetBranches = [...new Set(targetBranches.map(branch => branch.trim()))];
         await user.save();
         res.json({ success: true, repositories: user.repositories });
     } catch (error) {
@@ -180,14 +260,27 @@ router.put('/repositories/:repoId/branches', authenticateToken, async (req, res)
  */
 router.put('/repositories/:repoId/config', authenticateToken, async (req, res) => {
     try {
-        const repoName = decodeURIComponent(req.params.repoId);
+        let repoName;
+        try {
+            repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        } catch (error) {
+            return res.status(400).json({ error: error.message, code: "invalid_repository" });
+        }
         const { targetBranches, weights, bountyPool } = req.body;
 
-        const user = await User.findById(req.user.id);
-        const repo = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+        const repo = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
 
-        if (targetBranches) repo.targetBranches = targetBranches;
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        if (targetBranches !== undefined) {
+            if (!Array.isArray(targetBranches) || targetBranches.some(branch => typeof branch !== "string" || !branch.trim())) {
+                return res.status(400).json({ error: "targetBranches must be an array of non-empty branch names" });
+            }
+            repo.targetBranches = [...new Set(targetBranches.map(branch => branch.trim()))];
+        }
         if (weights) {
             repo.weights = {
                 impact: weights.impact ?? repo.weights.impact,
