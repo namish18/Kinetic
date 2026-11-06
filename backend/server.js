@@ -24,6 +24,7 @@ import authRoutes from './routes/auth.js';
 import contributionRoutes from './routes/contribution.js';
 import kineticRoutes from './routes/kinetic.js';
 import orgRoutes from './routes/repo.js';
+import payoutLifecycleRoutes from './routes/payoutLifecycle.js';
 import webhookRoutes from './routes/webhook.js';
 import { stopHelia } from './services/didService.js';
 
@@ -62,6 +63,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/contribution', contributionRoutes);
 app.use('/api/kinetic', kineticRoutes);
 app.use('/api/org', orgRoutes);
+app.use('/api/org/payouts', payoutLifecycleRoutes);
 app.use('/api/webhook', webhookRoutes);
 
 // ─── Static frontend ─────────────────────────────────────────
