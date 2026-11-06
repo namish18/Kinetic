@@ -190,31 +190,29 @@ export default function OrgDashboardPage() {
     const handleExecutePayout = async () => {
         setIsExecutingPayout(true);
         try {
-            const res = await fetch("http://localhost:5000/api/org/payout/execute", {
+            const res = await fetch("http://localhost:5000/api/org/payout/propose", {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${token}` }
             });
             const data = await res.json();
-            if (data.success) {
-                setResultModal({
-                    open: true,
-                    success: true,
-                    message: `Successfully executed payouts for ${data.results.length} contributors on Flow network!`,
-                    results: data.results
-                });
-            } else {
-                setResultModal({
-                    open: true,
-                    success: false,
-                    message: "Execution failed: " + (data.error || "Unknown error")
-                });
+            if (!res.ok) {
+                throw new Error(data.error || data.message || "Funding-pool proposal failed");
             }
-        } catch (e) {
-            console.error(e);
+            const hasFailures = Number(data.failedProposals || 0) > 0;
+            setResultModal({
+                open: true,
+                success: !hasFailures,
+                message: hasFailures
+                    ? `Created ${data.successfulProposals} proposal(s), but ${data.failedProposals} failed. Review the per-wallet results below. Total allocation: ${data.totalAllocated} FLOW.`
+                    : `Created ${data.successfulProposals} funding-pool payout proposal(s), allocating ${data.totalAllocated} FLOW from an available pool of ${data.availablePool} FLOW.`,
+                results: data.results || [],
+            });
+        } catch (error: any) {
+            console.error(error);
             setResultModal({
                 open: true,
                 success: false,
-                message: "Execution failed due to network error."
+                message: error?.message || "Funding-pool proposal failed due to a network error.",
             });
         } finally {
             setIsExecutingPayout(false);
@@ -295,8 +293,8 @@ export default function OrgDashboardPage() {
     const safeContributors = Array.isArray(contributors) ? contributors : [];
     const safeRecentEvents = Array.isArray(recentEvents) ? recentEvents : [];
     const totalScoreAvg = safeContributors.length > 0 ? (safeContributors.reduce((acc, c) => acc + c.totalScore, 0) / safeContributors.length).toFixed(1) : "0";
-    const totalAllocatedPool = repos.reduce((acc, r) => acc + (r.bountyPool || 100), 0);
-    const totalPayout = safeContributors.reduce((acc, c) => acc + (c.totalScore * 5), 0);
+    const totalAllocatedPool = repos.reduce((acc, r) => acc + (Number(r.bountyPool) || 0), 0);
+    const totalPayout = totalAllocatedPool;
 
     /* ── Weight sum for live validation ── */
     const weightSum = Object.values(editModal.weights).reduce((a, b) => a + b, 0);
@@ -454,13 +452,15 @@ export default function OrgDashboardPage() {
                                     <div key={i} className="flex items-center justify-between p-4 bg-muted/20 border border-border rounded-2xl">
                                         <div className="flex items-center gap-3">
                                             <div className="w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center font-bold text-[10px]">
-                                                {r.username.slice(0, 2).toUpperCase()}
+                                                {(r.usernames?.[0] || r.username || "??").slice(0, 2).toUpperCase()}
                                             </div>
-                                            <span className="text-sm font-bold">@{r.username}</span>
+                                            <span className="text-sm font-bold">{r.usernames?.map((username: string) => `@${username}`).join(", ") || `@${r.username || "Unknown"}`}</span>
                                         </div>
                                         <div className="text-right">
                                             <div className="text-xs font-black font-mono text-emerald-500">{r.amount} FLOW</div>
-                                            {r.txResult?.success && <div className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest mt-0.5">Sealed</div>}
+                                            {r.txResult?.success
+                                                ? <div className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest mt-0.5">Proposal sealed</div>
+                                                : <div className="text-[8px] font-bold text-destructive uppercase tracking-widest mt-0.5">Proposal failed</div>}
                                         </div>
                                     </div>
                                 ))}
@@ -501,7 +501,7 @@ export default function OrgDashboardPage() {
                     <div className="h-10 w-[1px] bg-border mx-2" />
                     <button onClick={handleExecutePayout} disabled={isExecutingPayout} className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm disabled:opacity-50">
                         {isExecutingPayout ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 fill-current" />}
-                        Execute Payouts
+                        Propose Payouts
                     </button>
                     <button
                         onClick={handleLogout}
@@ -794,8 +794,8 @@ export default function OrgDashboardPage() {
                                             </td>
                                             <td className="px-8 py-6">
                                                 <div className="flex flex-col">
-                                                    <span className="font-mono font-black text-emerald-500">{Math.round(c.totalScore * 5)} FLOW</span>
-                                                    <span className="text-[10px] font-bold text-muted-foreground mt-0.5">{formatUSD(Math.round(c.totalScore * 5))} USD</span>
+                                                    <span className="font-mono font-black text-muted-foreground">Pool-based</span>
+                                                    <span className="text-[10px] font-bold text-muted-foreground mt-0.5">Calculated at proposal time</span>
                                                 </div>
                                             </td>
                                             <td className="px-8 py-6 text-right">
@@ -828,27 +828,19 @@ export default function OrgDashboardPage() {
                                 <h2 className="text-2xl font-black tracking-tight uppercase tracking-tighter">Settlement Layer</h2>
                             </div>
 
-                            <div className="space-y-1 mb-8">
-                                <div className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-3">Governance Approvals (2/3)</div>
-                                <div className="flex gap-2">
-                                    {signatures.map((signed, i) => (
-                                        <div
-                                            key={i}
-                                            className={`flex-1 h-14 rounded-2xl border flex items-center justify-center transition-all ${signed ? 'bg-primary/20 border-primary text-primary' : 'bg-white/5 border-white/10 text-white/10'}`}
-                                        >
-                                            {signed ? <CheckCircle className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
-                                        </div>
-                                    ))}
-                                </div>
+                            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 mb-8">
+                                <div className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-2">Configured Repository Pools</div>
+                                <div className="text-xl font-black font-mono text-primary">{totalAllocatedPool.toLocaleString()} FLOW</div>
+                                <div className="text-xs text-white/40 mt-1">Actual proposal size is capped by the live treasury balance.</div>
                             </div>
 
                             <p className="text-sm text-white/50 mb-8 leading-relaxed font-medium">
-                                Multi-sig required to stream <span className="text-primary font-black">{totalPayout.toLocaleString()} FLOW</span> (~{formatUSD(totalPayout)} USD). Transaction builds upon <span className="underline decoration-primary/50 underline-offset-4 decoration-2">Algorithmic Valuation Snapshot #421</span>.
+                                Available configured funding pool: <span className="text-primary font-black">{totalPayout.toLocaleString()} FLOW</span> (~{formatUSD(totalPayout)} USD). Contributor rewards are calculated proportionally from eligible scores and the live treasury balance.
                             </p>
 
                             <button onClick={handleExecutePayout} disabled={isExecutingPayout} className="w-full bg-primary text-primary-foreground font-black py-4 rounded-[1.25rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2">
                                 {isExecutingPayout ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
-                                Sign & Execute
+                                Create Pool Proposals
                             </button>
                         </div>
                     </div>

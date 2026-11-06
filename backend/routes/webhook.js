@@ -1,7 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
 import { extractPRMetrics, calculatePRScore } from '../services/contributionService.js';
-import { proposePayout } from '../services/flowService.js';
 
 const router = express.Router();
 
@@ -62,43 +61,16 @@ router.post('/github', async (req, res) => {
             // result.score is in [0, ~1.5] range; map to 0-100 display score
             const finalScore = result.score ? Math.round(result.score * 100) : 0;
             
-            // Payout: 1 point = 0.1 FLOW (max ~15 FLOW per PR, capped at 10 FLOW)
-            const FLOW_PER_POINT = 0.1;
-            const MAX_FLOW_PER_PR = 10.0;
-            const estPayoutFlow = Math.min(MAX_FLOW_PER_PR, Math.round(result.score * FLOW_PER_POINT * 1000) / 1000);
-            
-            console.log(`Webhook: Payout calculated for ${contributorUsername} -> Score: ${finalScore}, Est payout: ${estPayoutFlow} FLOW\n`);
+            console.log(`Webhook: Contribution ${contributorUsername} scored at ${finalScore}; it will be considered in the next funding-pool allocation.\\n`);
 
-            let flowTxStatus = "skipped";
-            let flowTxId = null;
-
-            // Retrieve the contributor's wallet
-            const contributorUser = await User.findOne({ github: contributorUsername });
-            
-            if (estPayoutFlow > 0 && contributorUser?.wallet) {
-                console.log(`Webhook: Proposing smart contract payout to contributor's wallet ${contributorUser.wallet}...`);
-                const txResult = await proposePayout(contributorUser.wallet, estPayoutFlow);
-                
-                if (txResult.success) {
-                    flowTxStatus = "success";
-                    flowTxId = txResult.transactionId;
-                    console.log(`Webhook: Successfully proposed transaction (ID: ${flowTxId})`);
-                } else {
-                    flowTxStatus = "failed";
-                    console.log(`Webhook: Failed to execute Flow transaction:`, txResult.error);
-                }
-            } else {
-                console.log(`Webhook: Skipped execution (Tokens <= 0 or Contributor wallet not linked).`);
-            }
-
-            return res.status(200).json({ 
-                success: true, 
-                message: 'Payout calculated and processed', 
+            return res.status(200).json({
+                success: true,
+                message: 'Contribution scored and made available for the next funding-pool allocation',
                 score: finalScore,
-                payout: estPayoutFlow,
+                payout: null,
                 contributor: contributorUsername,
-                flowStatus: flowTxStatus,
-                transactionId: flowTxId
+                flowStatus: 'awaiting_funding_pool_allocation',
+                transactionId: null
             });
         }
 
