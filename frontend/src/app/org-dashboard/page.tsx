@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import {
     Building2,
     Wallet,
@@ -13,7 +13,6 @@ import {
     TrendingUp,
     BarChart3,
     Download,
-    Lock,
     Activity,
     Database,
     FileSearch,
@@ -76,6 +75,24 @@ const StatusBadge = ({ status }: { status: TxStatus }) => {
     );
 };
 
+interface PayoutRecipient {
+    username: string;
+    wallet: string;
+    amount: string;
+    score: number;
+}
+
+interface PayoutLifecycleState {
+    payoutId: string;
+    status: string;
+    totalAmount: string;
+    approvalCount: number;
+    requiredApprovals: number;
+    executed: boolean;
+    transactionId?: string;
+    recipientAllocations: PayoutRecipient[];
+}
+
 type WeightKey = "impact" | "complexity" | "quality" | "review" | "priority";
 const WEIGHT_KEYS: WeightKey[] = ["impact", "complexity", "quality", "review", "priority"];
 
@@ -86,7 +103,7 @@ export default function OrgDashboardPage() {
     const [recentEvents, setRecentEvents] = useState<RecentEvent[]>([]);
     const [loading, setLoading] = useState(true);
     const [newRepo, setNewRepo] = useState("");
-    const [signatures, setSignatures] = useState([true, true, false]);
+    const [payoutState, setPayoutState] = useState<PayoutLifecycleState | null>(null);
     const [isExecutingPayout, setIsExecutingPayout] = useState(false);
 
     // ── Unified Repo Edit Modal ──
@@ -114,6 +131,7 @@ export default function OrgDashboardPage() {
         open: boolean;
         success: boolean;
         message: string;
+        title?: string;
         results?: any[];
     }>({
         open: false,
@@ -129,6 +147,7 @@ export default function OrgDashboardPage() {
 
     const handleLogout = () => {
         localStorage.removeItem("token");
+        localStorage.removeItem("kinetic:lastPayoutState");
         window.location.href = "/login";
     };
 
@@ -150,6 +169,35 @@ export default function OrgDashboardPage() {
             if (cData.success) {
                 setContributors(Array.isArray(cData.contributors) ? cData.contributors : []);
                 setRecentEvents(Array.isArray(cData.recentEvents) ? cData.recentEvents : []);
+            }
+
+            const savedPayout = localStorage.getItem("kinetic:lastPayoutState");
+            if (savedPayout) {
+                try {
+                    const parsed = JSON.parse(savedPayout) as Partial<PayoutLifecycleState>;
+                    if (parsed.payoutId) {
+                        const payoutRes = await fetch(`http://localhost:5000/api/org/payout/${encodeURIComponent(parsed.payoutId)}`, {
+                            headers: { "Authorization": `Bearer ${authToken}` }
+                        });
+                        const payoutData = await payoutRes.json();
+                        if (payoutRes.ok && payoutData.success) {
+                            setPayoutState({
+                                payoutId: String(payoutData.payoutId),
+                                status: payoutData.status,
+                                totalAmount: String(payoutData.totalAmount),
+                                approvalCount: Number(payoutData.approvalCount),
+                                requiredApprovals: Number(payoutData.requiredApprovals),
+                                executed: Boolean(payoutData.executed),
+                                transactionId: payoutData.transactionId,
+                                recipientAllocations: Array.isArray(parsed.recipientAllocations) ? parsed.recipientAllocations : [],
+                            });
+                        } else if (payoutRes.status === 404) {
+                            localStorage.removeItem("kinetic:lastPayoutState");
+                        }
+                    }
+                } catch (restoreError) {
+                    console.error("Unable to restore payout state:", restoreError);
+                }
             }
 
         } catch (e) {
@@ -187,34 +235,121 @@ export default function OrgDashboardPage() {
         } catch (e) { console.error(e); }
     };
 
-    const handleExecutePayout = async () => {
+    const persistPayoutState = (state: PayoutLifecycleState) => {
+        setPayoutState(state);
+        localStorage.setItem("kinetic:lastPayoutState", JSON.stringify(state));
+    };
+
+    const handleProposePayout = async () => {
         setIsExecutingPayout(true);
         try {
-            const res = await fetch("http://localhost:5000/api/org/payout/execute", {
+            const res = await fetch("http://localhost:5000/api/org/payout/propose", {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${token}` }
             });
             const data = await res.json();
-            if (data.success) {
-                setResultModal({
-                    open: true,
-                    success: true,
-                    message: `Successfully executed payouts for ${data.results.length} contributors on Flow network!`,
-                    results: data.results
-                });
-            } else {
-                setResultModal({
-                    open: true,
-                    success: false,
-                    message: "Execution failed: " + (data.error || "Unknown error")
-                });
-            }
-        } catch (e) {
-            console.error(e);
+            if (!res.ok || !data.success) throw new Error(data.error || "Payout proposal failed");
+
+            const nextState: PayoutLifecycleState = {
+                payoutId: String(data.payoutId),
+                status: data.status || "proposed",
+                totalAmount: String(data.totalProposed),
+                approvalCount: Number(data.approvalCount || 0),
+                requiredApprovals: Number(data.requiredApprovals || 1),
+                executed: Boolean(data.executed),
+                transactionId: data.transactionId,
+                recipientAllocations: Array.isArray(data.recipientAllocations) ? data.recipientAllocations : [],
+            };
+            persistPayoutState(nextState);
+            setResultModal({
+                open: true,
+                success: true,
+                title: "Payout Proposal Created",
+                message: `Proposal #${nextState.payoutId} for ${nextState.totalAmount} FLOW is recorded on Flow. No funds have been transferred yet; ${nextState.requiredApprovals} approval(s) are required before execution.`,
+                results: nextState.recipientAllocations,
+            });
+        } catch (error: any) {
             setResultModal({
                 open: true,
                 success: false,
-                message: "Execution failed due to network error."
+                title: "Payout Proposal Failed",
+                message: error?.message || "Unable to create payout proposal.",
+            });
+        } finally {
+            setIsExecutingPayout(false);
+        }
+    };
+
+    const handleApprovePayout = async () => {
+        if (!payoutState) return;
+        setIsExecutingPayout(true);
+        try {
+            const res = await fetch(`http://localhost:5000/api/org/payout/${encodeURIComponent(payoutState.payoutId)}/approve`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || "Payout approval failed");
+
+            const nextState: PayoutLifecycleState = {
+                ...payoutState,
+                status: data.status,
+                approvalCount: Number(data.approvalCount || 0),
+                requiredApprovals: Number(data.requiredApprovals || 1),
+                executed: Boolean(data.executed),
+                transactionId: data.transactionId,
+            };
+            persistPayoutState(nextState);
+            setResultModal({
+                open: true,
+                success: true,
+                title: "Payout Approval Recorded",
+                message: `Proposal #${nextState.payoutId} now has ${nextState.approvalCount}/${nextState.requiredApprovals} required approvals. Execution remains a separate transaction.`,
+            });
+        } catch (error: any) {
+            setResultModal({
+                open: true,
+                success: false,
+                title: "Payout Approval Failed",
+                message: error?.message || "Unable to approve payout proposal.",
+            });
+        } finally {
+            setIsExecutingPayout(false);
+        }
+    };
+
+    const handleExecutePayout = async () => {
+        if (!payoutState) return;
+        setIsExecutingPayout(true);
+        try {
+            const res = await fetch(`http://localhost:5000/api/org/payout/${encodeURIComponent(payoutState.payoutId)}/execute`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.error || "Payout execution failed");
+
+            const nextState: PayoutLifecycleState = {
+                ...payoutState,
+                status: data.status || "executed",
+                approvalCount: Number(data.approvalCount ?? payoutState.approvalCount),
+                requiredApprovals: Number(data.requiredApprovals ?? payoutState.requiredApprovals),
+                executed: Boolean(data.executed),
+                transactionId: data.transactionId,
+            };
+            persistPayoutState(nextState);
+            setResultModal({
+                open: true,
+                success: true,
+                title: "Payout Executed",
+                message: `Proposal #${nextState.payoutId} is confirmed as executed by the Flow contract.`,
+            });
+        } catch (error: any) {
+            setResultModal({
+                open: true,
+                success: false,
+                title: "Payout Execution Failed",
+                message: error?.message || "Unable to execute payout proposal.",
             });
         } finally {
             setIsExecutingPayout(false);
@@ -295,8 +430,8 @@ export default function OrgDashboardPage() {
     const safeContributors = Array.isArray(contributors) ? contributors : [];
     const safeRecentEvents = Array.isArray(recentEvents) ? recentEvents : [];
     const totalScoreAvg = safeContributors.length > 0 ? (safeContributors.reduce((acc, c) => acc + c.totalScore, 0) / safeContributors.length).toFixed(1) : "0";
-    const totalAllocatedPool = repos.reduce((acc, r) => acc + (r.bountyPool || 100), 0);
-    const totalPayout = safeContributors.reduce((acc, c) => acc + (c.totalScore * 5), 0);
+    const totalAllocatedPool = repos.reduce((acc, r) => acc + (Number(r.bountyPool) || 0), 0);
+    const totalPayout = payoutState ? Number(payoutState.totalAmount) : totalAllocatedPool;
 
     /* ── Weight sum for live validation ── */
     const weightSum = Object.values(editModal.weights).reduce((a, b) => a + b, 0);
@@ -442,7 +577,7 @@ export default function OrgDashboardPage() {
                         </div>
                         
                         <h2 className="text-2xl font-black tracking-tight mb-2">
-                            {resultModal.success ? "Transaction Success" : "Execution Failed"}
+                            {resultModal.title || (resultModal.success ? "Transaction Success" : "Payout Action Failed")}
                         </h2>
                         <p className="text-muted-foreground text-sm mb-8 px-4 leading-relaxed">
                             {resultModal.message}
@@ -499,9 +634,9 @@ export default function OrgDashboardPage() {
                         {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <RefreshCcw className="w-5 h-5" />}
                     </button>
                     <div className="h-10 w-[1px] bg-border mx-2" />
-                    <button onClick={handleExecutePayout} disabled={isExecutingPayout} className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm disabled:opacity-50">
+                    <button onClick={handleProposePayout} disabled={isExecutingPayout || Boolean(payoutState && !payoutState.executed)} className="bg-primary text-primary-foreground px-6 py-3 rounded-2xl font-bold text-sm hover:opacity-90 transition-all flex items-center gap-2 shadow-glow-sm disabled:opacity-50">
                         {isExecutingPayout ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 fill-current" />}
-                        Execute Payouts
+                        Propose Payouts
                     </button>
                     <button
                         onClick={handleLogout}
@@ -794,8 +929,16 @@ export default function OrgDashboardPage() {
                                             </td>
                                             <td className="px-8 py-6">
                                                 <div className="flex flex-col">
-                                                    <span className="font-mono font-black text-emerald-500">{Math.round(c.totalScore * 5)} FLOW</span>
-                                                    <span className="text-[10px] font-bold text-muted-foreground mt-0.5">{formatUSD(Math.round(c.totalScore * 5))} USD</span>
+                                                    <span className="font-mono font-black text-emerald-500">
+                                                        {payoutState?.recipientAllocations.find(item => item.username === c.username)?.amount
+                                                            ? `${payoutState.recipientAllocations.find(item => item.username === c.username)?.amount} FLOW`
+                                                            : "Not proposed"}
+                                                    </span>
+                                                    <span className="text-[10px] font-bold text-muted-foreground mt-0.5">
+                                                        {payoutState?.recipientAllocations.find(item => item.username === c.username)?.amount
+                                                            ? `${formatUSD(Number(payoutState.recipientAllocations.find(item => item.username === c.username)?.amount))} USD`
+                                                            : "Awaiting allocation"}
+                                                    </span>
                                                 </div>
                                             </td>
                                             <td className="px-8 py-6 text-right">
@@ -828,29 +971,47 @@ export default function OrgDashboardPage() {
                                 <h2 className="text-2xl font-black tracking-tight uppercase tracking-tighter">Settlement Layer</h2>
                             </div>
 
-                            <div className="space-y-1 mb-8">
-                                <div className="text-[10px] font-black text-white/30 uppercase tracking-widest mb-3">Governance Approvals (2/3)</div>
-                                <div className="flex gap-2">
-                                    {signatures.map((signed, i) => (
-                                        <div
-                                            key={i}
-                                            className={`flex-1 h-14 rounded-2xl border flex items-center justify-center transition-all ${signed ? 'bg-primary/20 border-primary text-primary' : 'bg-white/5 border-white/10 text-white/10'}`}
-                                        >
-                                            {signed ? <CheckCircle className="w-6 h-6" /> : <Lock className="w-6 h-6" />}
-                                        </div>
-                                    ))}
+                            <div className="space-y-3 mb-8">
+                                <div className="text-[10px] font-black text-white/30 uppercase tracking-widest">On-chain Payout Status</div>
+                                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                                    {payoutState ? (
+                                        <>
+                                            <div className="flex items-center justify-between gap-3 mb-2">
+                                                <span className="text-sm font-bold">Proposal #{payoutState.payoutId}</span>
+                                                <span className={`text-[10px] font-black uppercase tracking-widest ${payoutState.executed ? "text-emerald-400" : "text-amber-300"}`}>
+                                                    {payoutState.status.replace("_", " ")}
+                                                </span>
+                                            </div>
+                                            <div className="text-xs text-white/50">
+                                                {payoutState.approvalCount}/{payoutState.requiredApprovals} required approvals
+                                            </div>
+                                            <div className="text-lg font-black font-mono text-primary mt-2">{payoutState.totalAmount} FLOW</div>
+                                            {payoutState.transactionId && (
+                                                <div className="text-[9px] text-white/30 font-mono mt-2 break-all">TX: {payoutState.transactionId}</div>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <p className="text-xs text-white/50">No payout proposal selected. Create a proposal to begin settlement.</p>
+                                    )}
                                 </div>
                             </div>
 
-                            <p className="text-sm text-white/50 mb-8 leading-relaxed font-medium">
-                                Multi-sig required to stream <span className="text-primary font-black">{totalPayout.toLocaleString()} FLOW</span> (~{formatUSD(totalPayout)} USD). Transaction builds upon <span className="underline decoration-primary/50 underline-offset-4 decoration-2">Algorithmic Valuation Snapshot #421</span>.
+                            <p className="text-sm text-white/50 mb-6 leading-relaxed font-medium">
+                                Available configured pool: <span className="text-primary font-black">{totalPayout.toLocaleString()} FLOW</span> (~{formatUSD(totalPayout)} USD). Rewards are allocated proportionally by contributor scores. Proposal, approval, and execution are separate on-chain transactions.
                             </p>
 
-                            <button onClick={handleExecutePayout} disabled={isExecutingPayout} className="w-full bg-primary text-primary-foreground font-black py-4 rounded-[1.25rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2">
-                                {isExecutingPayout ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
-                                Sign & Execute
-                            </button>
-                        </div>
+                            <div className="space-y-3">
+                                <button onClick={handleProposePayout} disabled={isExecutingPayout || Boolean(payoutState && !payoutState.executed)} className="w-full bg-primary text-primary-foreground font-black py-4 rounded-[1.25rem] hover:scale-[0.98] active:scale-95 transition-all text-sm uppercase tracking-widest disabled:opacity-50 flex items-center justify-center gap-2">
+                                    {isExecutingPayout ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
+                                    Create Payout Proposal
+                                </button>
+                                <button onClick={handleApprovePayout} disabled={isExecutingPayout || !payoutState || payoutState.executed || payoutState.approvalCount >= payoutState.requiredApprovals} className="w-full border border-white/15 text-white font-black py-3 rounded-[1.25rem] transition-all text-xs uppercase tracking-widest disabled:opacity-40">
+                                    Approve Proposal
+                                </button>
+                                <button onClick={handleExecutePayout} disabled={isExecutingPayout || !payoutState || payoutState.executed || payoutState.approvalCount < payoutState.requiredApprovals} className="w-full bg-emerald-600/90 text-white font-black py-3 rounded-[1.25rem] transition-all text-xs uppercase tracking-widest disabled:opacity-40 flex items-center justify-center gap-2">
+                                    Execute Approved Payout
+                                </button>
+                            </div>
                     </div>
 
                     {/* Leaderboard Card */}
