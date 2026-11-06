@@ -6,6 +6,11 @@
  */
 
 import User from '../models/User.js';
+import {
+    fetchAllSearchResults,
+    fetchPRDetails,
+    repoFullNameFromUrl
+} from './githubSearch.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
@@ -106,24 +111,38 @@ export async function computeContributionScore(username, token, options = {}) {
             }
         }
 
-        // Fetch merged PRs using search API
+        // Fetch all merged PRs using the search API (paginated, capped at 1000 by GitHub)
         const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
-        const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=15`, { headers });
-        const searchData = await searchRes.json();
-        
-        if (!searchData.items || searchData.items.length === 0) {
-            return { username, finalScore: 0, prs: [], meta: { prCount: 0 } };
+        const search = await fetchAllSearchResults(searchQuery, headers);
+        const searchMeta = {
+            searchTotal: search.totalCount,
+            searchFetched: search.items.length,
+            truncated: search.truncated,
+            rateLimited: search.rateLimited,
+            ...(search.resetAt && { rateLimitResetAt: search.resetAt })
+        };
+
+        if (search.items.length === 0) {
+            return {
+                username, finalScore: 0, prs: [],
+                ...(search.error && { error: search.error }),
+                meta: { prCount: 0, ...searchMeta, partial: Boolean(search.error) }
+            };
         }
+
+        // Skip the detail request for PRs in repos not registered on the platform.
+        // Case-insensitive so it never drops a PR the exact check below would count.
+        const registeredLower = new Set(Object.keys(registeredRepoMap).map(name => name.toLowerCase()));
+        const candidates = search.items.filter(item =>
+            item.pull_request?.url && registeredLower.has(repoFullNameFromUrl(item.repository_url))
+        );
+        const details = await fetchPRDetails(candidates.map(item => item.pull_request.url), headers);
 
         let totalPoints = 0;
         const prDetails = [];
 
-        for (const item of searchData.items) {
-            const prUrl = item.pull_request?.url;
-            if (!prUrl) continue;
-
-            const prRes = await fetch(prUrl, { headers });
-            const prData = await prRes.json();
+        for (const prData of details.prs) {
+            if (!prData) continue;
 
             const repoFullName = prData.base?.repo?.full_name;
 
@@ -162,7 +181,15 @@ export async function computeContributionScore(username, token, options = {}) {
             prs: prDetails,
             meta: {
                 computeTimeMs: Date.now() - (options.startTime || Date.now()),
-                prCount: prDetails.length
+                prCount: prDetails.length,
+                ...searchMeta,
+                rateLimited: search.rateLimited || details.rateLimited,
+                ...((search.resetAt || details.resetAt) && { rateLimitResetAt: search.resetAt || details.resetAt }),
+                partial: Boolean(search.error) || search.incomplete || details.rateLimited || details.errors > 0,
+                ...(search.error && { searchError: search.error }),
+                detailRequests: details.requests,
+                detailErrors: details.errors,
+                skippedUnregistered: search.items.length - candidates.length
             }
         };
     } catch (error) {
@@ -188,24 +215,34 @@ export async function computeOrgContributors(orgId, token) {
         const repoNames = org.repositories.map(r => r.name);
         if (repoNames.length === 0) return { contributors: [], recentEvents: [] };
 
-        // Search for merged PRs across all organization repositories
+        // Search for merged PRs across all organization repositories (paginated)
         const repoQuery = repoNames.map(name => `repo:${name}`).join(' ');
         const searchQuery = `${repoQuery} is:pr is:merged updated:>2024-01-01`;
-        const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=30`, { headers });
-        const searchData = await searchRes.json();
+        const search = await fetchAllSearchResults(searchQuery, headers);
+        const searchMeta = {
+            searchTotal: search.totalCount,
+            searchFetched: search.items.length,
+            truncated: search.truncated,
+            rateLimited: search.rateLimited,
+            partial: Boolean(search.error) || search.incomplete,
+            ...(search.resetAt && { rateLimitResetAt: search.resetAt }),
+            ...(search.error && { searchError: search.error })
+        };
 
-        if (!searchData.items) return { contributors: [], recentEvents: [] };
+        if (search.items.length === 0) return { contributors: [], recentEvents: [], meta: searchMeta };
+
+        const prItems = search.items.filter(item => item.pull_request?.url);
+        const details = await fetchPRDetails(prItems.map(item => item.pull_request.url), headers);
 
         const contributorsMap = {};
         const recentEvents = [];
 
-        for (const item of searchData.items) {
+        for (let i = 0; i < prItems.length; i++) {
+            const item = prItems[i];
+            const prData = details.prs[i];
+            if (!prData?.base?.repo) continue;
+
             const username = item.user.login;
-            const prUrl = item.pull_request.url;
-
-            const prRes = await fetch(prUrl, { headers });
-            const prData = await prRes.json();
-
             const repoFullName = prData.base.repo.full_name;
             const repoConfig = org.repositories.find(r => r.name === repoFullName);
             
@@ -243,7 +280,15 @@ export async function computeOrgContributors(orgId, token) {
 
         return {
             contributors: stats.sort((a, b) => b.totalScore - a.totalScore),
-            recentEvents: recentEvents.slice(0, 10)
+            recentEvents: recentEvents.slice(0, 10),
+            meta: {
+                ...searchMeta,
+                rateLimited: searchMeta.rateLimited || details.rateLimited,
+                ...(details.resetAt && { rateLimitResetAt: details.resetAt }),
+                partial: searchMeta.partial || details.rateLimited || details.errors > 0,
+                detailRequests: details.requests,
+                detailErrors: details.errors
+            }
         };
 
     } catch (error) {
