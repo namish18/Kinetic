@@ -2,10 +2,11 @@
  * Contribution Scoring Service — based on contribution_algo.md
  * 
  * This service fetches real data from GitHub and computes a score 
- * following the "Final Algorithm" specifications.
+ * following the MSTS v2 Final Algorithm specifications.
  */
 
 import User from '../models/User.js';
+import { calculateSpamPenalty } from './kineticMechanisms.js';
 import AlgorithmVersion from '../models/AlgorithmVersion.js';
 import ContributionScore from '../models/ContributionScore.js';
 
@@ -88,7 +89,8 @@ export function extractPRMetrics(pr) {
 }
 
 /**
- * Steps 1-6: Computes the Final Score for a PR based on contribution_algo.md
+ * Computes the Final Score for a PR based on contribution_algo.md
+ * Integrates MSTS Anti-Gaming, Log-scaled Base Impact, Reputation, and Velocity Penalties.
  */
 export function calculatePRScore(metrics, weights, context = {}) {
     // Step 1: Anti-Gaming Filters
@@ -110,7 +112,7 @@ export function calculatePRScore(metrics, weights, context = {}) {
         (w.review * metrics.review) +
         (w.priority * metrics.priority);
 
-    // Step 4: Reputation System
+    // Step 3: Reputation Multiplier
     const rawReputation = context.reputation || 0;
     const R_max = 500; 
     const R_norm = Math.max(0, Math.log(rawReputation + 1) / Math.log(R_max + 1));
@@ -118,17 +120,34 @@ export function calculatePRScore(metrics, weights, context = {}) {
     let repMult = 1 + (REPUTATION_INFLUENCE_LAMBDA * Math.min(1.0, R_norm));
     repMult = Math.min(1.5, repMult); 
 
-    // Step 6: Final Score
-    const finalScore = baseScore * repMult;
+    // Step 4: Velocity Spam Penalty
+    const prTimestamps = context.timestamps || [];
+    const spamPenalty = calculateSpamPenalty(prTimestamps);
+
+    // Step 5: Final Score Formula: (Base * Rep) * Penalty
+    const finalScore = Number((baseScore * repMult * spamPenalty).toFixed(4));
 
     return {
         score: finalScore,
-        details: { metrics, weights: w, baseScore, repMult }
+        spamPenalty,
+        isSpamFlagged: spamPenalty < 0.8,
+        details: { metrics, weights: w, baseScore, repMult, spamPenalty }
     };
 }
 
 /**
- * Main function: Fetches real PRs and computes the overall Contribution Score
+ * Synchronous helper for evaluating single PR payload and timestamp history
+ */
+export function evaluateSinglePRScore(prData, contributorHistory = []) {
+    const prTimestamps = contributorHistory.map(pr => pr.createdAt || pr.submittedAt);
+    prTimestamps.push(prData.createdAt || prData.created_at || new Date());
+
+    const metrics = extractPRMetrics(prData);
+    return calculatePRScore(metrics, null, { timestamps: prTimestamps });
+}
+
+/**
+ * Main function: Fetches real PRs from GitHub and computes overall Contribution Score
  */
 export async function computeContributionScore(username, token, options = {}) {
     const githubToken = token || process.env.GITHUB_PAT;
@@ -141,18 +160,16 @@ export async function computeContributionScore(username, token, options = {}) {
         const user = await User.findOne({ github: username });
         const userRepos = user?.repositories || [];
 
-        // Build a map of ALL repos registered on the platform (across all org users)
-        // key: repo full name (owner/repo), value: weights config from the registering org
+        // Build a map of ALL repos registered on the platform
         const allOrgUsers = await User.find({ 'repositories.0': { $exists: true } });
         const registeredRepoMap = {};
         for (const orgUser of allOrgUsers) {
             for (const repo of orgUser.repositories) {
-                // org-defined weights take precedence; contributor's own config is a fallback
                 registeredRepoMap[repo.name] = repo;
             }
         }
 
-        // Fetch merged PRs using search API
+        // Fetch merged PRs using GitHub search API
         const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
         const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=15`, { headers });
         const searchData = await searchRes.json();
@@ -163,6 +180,7 @@ export async function computeContributionScore(username, token, options = {}) {
 
         let totalPoints = 0;
         const prDetails = [];
+        const prTimestamps = [];
 
         for (const item of searchData.items) {
             const prUrl = item.pull_request?.url;
@@ -173,18 +191,21 @@ export async function computeContributionScore(username, token, options = {}) {
 
             const repoFullName = prData.base?.repo?.full_name;
 
-            // ── FILTER: only track PRs for repos registered on the platform ──
+            // Filter: only track PRs for repos registered on the platform
             if (!repoFullName || !registeredRepoMap[repoFullName]) continue;
 
-            // Use org-defined weights for this repo (fallback to contributor's own config)
+            // Collect timestamp for velocity penalty calculation
+            if (prData.created_at) prTimestamps.push(prData.created_at);
+
             const repoConfig = registeredRepoMap[repoFullName] || userRepos.find(r => r.name === repoFullName);
             const weights = repoConfig?.weights || null;
 
             const metrics = extractPRMetrics(prData);
-            const result = calculatePRScore(metrics, weights, { reputation: userRepos.length * 10 });
+            const result = calculatePRScore(metrics, weights, { 
+                reputation: userRepos.length * 10,
+                timestamps: prTimestamps 
+            });
 
-            // Max points per PR is roughly (1 * 1.5 * 1.2) = 1.8. 
-            // We scale this so a high impact PR is ~25-30 pts.
             const prPoints = Math.round(result.score * 20 * 10) / 10;
             totalPoints += prPoints;
 
@@ -228,7 +249,6 @@ export async function computeContributionScore(username, token, options = {}) {
             });
         }
 
-        // Hard cap at 100
         const finalScore = Math.min(100, Math.round(totalPoints * 10) / 10);
 
         return {
@@ -264,7 +284,6 @@ export async function computeOrgContributors(orgId, token) {
         const repoNames = org.repositories.map(r => r.name);
         if (repoNames.length === 0) return { contributors: [], recentEvents: [] };
 
-        // Search for merged PRs across all organization repositories
         const repoQuery = repoNames.map(name => `repo:${name}`).join(' ');
         const searchQuery = `${repoQuery} is:pr is:merged updated:>2024-01-01`;
         const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=30`, { headers });
