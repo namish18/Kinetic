@@ -2,10 +2,13 @@
  * Contribution Scoring Service — based on contribution_algo.md
  * 
  * This service fetches real data from GitHub and computes a score 
- * following the "Final Algorithm" specifications.
+ * following the MSTS v2 Final Algorithm specifications.
  */
 
 import User from '../models/User.js';
+import { calculateSpamPenalty } from './kineticMechanisms.js';
+import AlgorithmVersion from '../models/AlgorithmVersion.js';
+import ContributionScore from '../models/ContributionScore.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
@@ -156,6 +159,48 @@ export async function getContributorReputation(username, token, customWeights = 
             weights: { ...DEFAULT_REPUTATION_WEIGHTS, ...customWeights }
         };
     }
+// ─────────────────────────────────────────────────────────────
+//  Algorithm Versioning
+// ─────────────────────────────────────────────────────────────
+
+export const ALGORITHM_VERSION = 'msts-v2.0.0';
+export const ALGORITHM_NAME = 'MSTS Contribution Scoring';
+
+/**
+ * Returns the exact configuration used by the scoring algorithm.
+ */
+export function getAlgorithmConfiguration() {
+    return {
+        maxLines: MAX_LINES,
+        reputationInfluenceLambda: REPUTATION_INFLUENCE_LAMBDA,
+        reputationMax: 500,
+        reputationMultiplierCap: 1.5,
+        filters: {
+            minQuality: 0.3,
+            minReview: 0.3,
+            spamImpact: 0.2,
+            spamComplexity: 0.2,
+        },
+        defaultWeights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 },
+        pointsScale: 20,
+        scoreCap: 100,
+    };
+}
+
+/**
+ * Ensures the current algorithm version exists in DB and is the only active one.
+ */
+export async function ensureAlgorithmVersion() {
+    const config = getAlgorithmConfiguration();
+    await AlgorithmVersion.updateMany(
+        { version: { $ne: ALGORITHM_VERSION } },
+        { isActive: false }
+    );
+    return AlgorithmVersion.findOneAndUpdate(
+        { version: ALGORITHM_VERSION },
+        { $setOnInsert: { name: ALGORITHM_NAME, configuration: config }, isActive: true },
+        { upsert: true, new: true }
+    );
 }
 
 /**
@@ -190,7 +235,8 @@ export function extractPRMetrics(pr) {
 }
 
 /**
- * Steps 1-6: Computes the Final Score for a PR based on contribution_algo.md
+ * Computes the Final Score for a PR based on contribution_algo.md
+ * Integrates MSTS Anti-Gaming, Log-scaled Base Impact, Reputation, and Velocity Penalties.
  */
 export function calculatePRScore(metrics, weights, context = {}) {
     // Step 1: Anti-Gaming Filters
@@ -212,7 +258,7 @@ export function calculatePRScore(metrics, weights, context = {}) {
         (w.review * metrics.review) +
         (w.priority * metrics.priority);
 
-    // Step 4: Reputation System
+    // Step 3: Reputation Multiplier
     const rawReputation = context.reputation || 0;
     const R_max = 500; 
     const R_norm = Math.max(0, Math.log(rawReputation + 1) / Math.log(R_max + 1));
@@ -220,17 +266,34 @@ export function calculatePRScore(metrics, weights, context = {}) {
     let repMult = 1 + (REPUTATION_INFLUENCE_LAMBDA * Math.min(1.0, R_norm));
     repMult = Math.min(1.5, repMult); 
 
-    // Step 6: Final Score
-    const finalScore = baseScore * repMult;
+    // Step 4: Velocity Spam Penalty
+    const prTimestamps = context.timestamps || [];
+    const spamPenalty = calculateSpamPenalty(prTimestamps);
+
+    // Step 5: Final Score Formula: (Base * Rep) * Penalty
+    const finalScore = Number((baseScore * repMult * spamPenalty).toFixed(4));
 
     return {
         score: finalScore,
-        details: { metrics, weights: w, baseScore, repMult }
+        spamPenalty,
+        isSpamFlagged: spamPenalty < 0.8,
+        details: { metrics, weights: w, baseScore, repMult, spamPenalty }
     };
 }
 
 /**
- * Main function: Fetches real PRs and computes the overall Contribution Score
+ * Synchronous helper for evaluating single PR payload and timestamp history
+ */
+export function evaluateSinglePRScore(prData, contributorHistory = []) {
+    const prTimestamps = contributorHistory.map(pr => pr.createdAt || pr.submittedAt);
+    prTimestamps.push(prData.createdAt || prData.created_at || new Date());
+
+    const metrics = extractPRMetrics(prData);
+    return calculatePRScore(metrics, null, { timestamps: prTimestamps });
+}
+
+/**
+ * Main function: Fetches real PRs from GitHub and computes overall Contribution Score
  */
 export async function computeContributionScore(username, token, options = {}) {
     const githubToken = token || process.env.GITHUB_PAT;
@@ -243,18 +306,16 @@ export async function computeContributionScore(username, token, options = {}) {
         const user = await User.findOne({ github: username });
         const userRepos = user?.repositories || [];
 
-        // Build a map of ALL repos registered on the platform (across all org users)
-        // key: repo full name (owner/repo), value: weights config from the registering org
+        // Build a map of ALL repos registered on the platform
         const allOrgUsers = await User.find({ 'repositories.0': { $exists: true } });
         const registeredRepoMap = {};
         for (const orgUser of allOrgUsers) {
             for (const repo of orgUser.repositories) {
-                // org-defined weights take precedence; contributor's own config is a fallback
                 registeredRepoMap[repo.name] = repo;
             }
         }
 
-        // Fetch merged PRs using search API
+        // Fetch merged PRs using GitHub search API
         const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
         const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=15`, { headers });
         const searchData = await searchRes.json();
@@ -273,6 +334,12 @@ export async function computeContributionScore(username, token, options = {}) {
         }
 
         const validPRRecords = [];
+            return { username, finalScore: 0, algorithmVersion: ALGORITHM_VERSION, prs: [], meta: { prCount: 0 } };
+        }
+
+        let totalPoints = 0;
+        const prDetails = [];
+        const prTimestamps = [];
 
         for (const item of searchData.items) {
             const prUrl = item.pull_request?.url;
@@ -283,10 +350,12 @@ export async function computeContributionScore(username, token, options = {}) {
 
             const repoFullName = prData.base?.repo?.full_name;
 
-            // ── FILTER: only track PRs for repos registered on the platform ──
+            // Filter: only track PRs for repos registered on the platform
             if (!repoFullName || !registeredRepoMap[repoFullName]) continue;
 
-            // Use org-defined weights for this repo (fallback to contributor's own config)
+            // Collect timestamp for velocity penalty calculation
+            if (prData.created_at) prTimestamps.push(prData.created_at);
+
             const repoConfig = registeredRepoMap[repoFullName] || userRepos.find(r => r.name === repoFullName);
             const weights = repoConfig?.weights || null;
             const repWeights = options.reputationWeights || repoConfig?.reputationWeights;
@@ -338,17 +407,48 @@ export async function computeContributionScore(username, token, options = {}) {
         for (const record of validPRRecords) {
             // Integrate historical reputation into PR scoring
             const result = calculatePRScore(record.metrics, record.weights, { reputation: contributorReputation });
+            const result = calculatePRScore(metrics, weights, { 
+                reputation: userRepos.length * 10,
+                timestamps: prTimestamps 
+            });
 
-            // Max points per PR is roughly (1 * 1.5 * 1.2) = 1.8. 
-            // We scale this so a high impact PR is ~25-30 pts.
             const prPoints = Math.round(result.score * 20 * 10) / 10;
             totalPoints += prPoints;
+
+            // ── Persist score with algorithm version + config snapshot ──
+            try {
+                await ContributionScore.findOneAndUpdate(
+                    { username, repository: repoFullName, prNumber: prData.number },
+                    {
+                        $set: {
+                            score: prPoints,
+                            algorithmVersion: ALGORITHM_VERSION,
+                            configurationSnapshot: {
+                                algorithm: getAlgorithmConfiguration(),
+                                weights: result.details?.weights || weights || getAlgorithmConfiguration().defaultWeights,
+                                repoConfig: repoConfig
+                                    ? {
+                                        name: repoConfig.name,
+                                        weights: repoConfig.weights,
+                                        bountyPool: repoConfig.bountyPool
+                                    }
+                                    : null,
+                            },
+                            calculatedAt: new Date(),
+                        },
+                    },
+                    { upsert: true, new: true }
+                );
+            } catch (dbErr) {
+                console.error('Failed to persist contribution score:', dbErr.message);
+            }
 
             prDetails.push({
                 id: record.prData.number,
                 title: record.prData.title,
                 repo: record.repoFullName,
                 score: prPoints,
+                algorithmVersion: ALGORITHM_VERSION,
                 status: 'merged',
                 date: record.prData.merged_at?.split('T')[0] || 'N/A',
                 link: record.prData.html_url
@@ -370,6 +470,7 @@ export async function computeContributionScore(username, token, options = {}) {
             finalScore,
             reputation: contributorReputation,
             reputationEvidence: repEvidence,
+            algorithmVersion: ALGORITHM_VERSION,
             prs: prDetails,
             meta: {
                 computeTimeMs: Date.now() - (options.startTime || Date.now()),
@@ -399,7 +500,6 @@ export async function computeOrgContributors(orgId, token) {
         const repoNames = org.repositories.map(r => r.name);
         if (repoNames.length === 0) return { contributors: [], recentEvents: [] };
 
-        // Search for merged PRs across all organization repositories
         const repoQuery = repoNames.map(name => `repo:${name}`).join(' ');
         const searchQuery = `${repoQuery} is:pr is:merged updated:>2024-01-01`;
         const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=30`, { headers });
