@@ -17,6 +17,7 @@ function indexMeta(sync) {
         stale: sync.stale,
         partial: sync.partial,
         truncated: sync.truncated,
+        historyTruncated: sync.historyTruncated,
         rateLimited: sync.rateLimited,
         ...(sync.rateLimitResetAt && { rateLimitResetAt: sync.rateLimitResetAt }),
         ...(sync.errors.length > 0 && { syncError: sync.errors[0] }),

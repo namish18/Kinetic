@@ -6,9 +6,12 @@
  *
  * Sync is incremental per scope ('author:<login>' or 'repo:<owner/repo>'):
  * scopes with a cursor share one search for PRs merged since the oldest
- * cursor; scopes without one get a single full-history search. A cursor only
- * moves forward ($max), and only after a clean search (no error, no rate
- * limit, not incomplete, not truncated at GitHub's 1000-result cap).
+ * cursor; scopes without one get a single full-history search, newest first.
+ * A cursor only moves forward ($max), and only after a clean search (no error,
+ * no rate limit, not incomplete). A full-history search truncated at GitHub's
+ * 1000-result cap still moves each scope's cursor to the newest mergedAt it
+ * fetched and marks the scope historyTruncated; a truncated incremental search
+ * does not move cursors, since a gap there would lose PRs.
  */
 
 import ContributionEvent from '../models/ContributionEvent.js';
@@ -159,10 +162,10 @@ export async function upsertEvents(Event, items, now = new Date()) {
 /**
  * Moves a scope's cursor forward (never back).
  */
-export async function advanceCursor(SyncState, scope, lastMergedAt, now = new Date()) {
+export async function advanceCursor(SyncState, scope, lastMergedAt, now = new Date(), { historyTruncated = false } = {}) {
     const op = () => SyncState.updateOne(
         { scope },
-        { $max: { lastMergedAt }, $set: { lastSyncedAt: now } },
+        { $max: { lastMergedAt }, $set: { lastSyncedAt: now, ...(historyTruncated && { historyTruncated: true }) } },
         { upsert: true }
     );
     try {
@@ -172,6 +175,21 @@ export async function advanceCursor(SyncState, scope, lastMergedAt, now = new Da
         if (error?.code !== 11000) throw error;
         await op();
     }
+}
+
+/**
+ * Newest merged_at per scope key ('author:<login>' and 'repo:<owner/repo>').
+ */
+function newestMergedAtByScope(items) {
+    const newest = new Map();
+    for (const item of items) {
+        const event = eventFromSearchItem(item);
+        if (!event.mergedAt) continue;
+        for (const key of [`author:${event.authorKey}`, `repo:${event.repoKey}`]) {
+            if (!newest.has(key) || event.mergedAt > newest.get(key)) newest.set(key, event.mergedAt);
+        }
+    }
+    return newest;
 }
 
 /**
@@ -204,12 +222,14 @@ export async function syncIndex({
         rateLimited: false,
         rateLimitResetAt: null,
         errors: [],
-        cursorsAdvanced: []
+        cursorsAdvanced: [],
+        historyTruncated: []
     };
 
     // Group scopes: one shared incremental search, one full search for new scopes
     const cursors = await SyncState.find({ scope: { $in: scopes.map(s => s.key) } }).lean();
     const cursorByScope = new Map(cursors.map(c => [c.scope, c.lastMergedAt]));
+    meta.historyTruncated = cursors.filter(c => c.historyTruncated).map(c => c.scope);
     const withCursor = scopes.filter(s => cursorByScope.has(s.key));
     const fresh = scopes.filter(s => !cursorByScope.has(s.key));
 
@@ -221,8 +241,10 @@ export async function syncIndex({
     if (fresh.length > 0) groups.push({ scopes: fresh, since: null });
 
     for (const group of groups) {
+        const fullHistory = !group.since;
         const query = buildSearchQuery(group.scopes.map(s => s.qualifier), group.since);
-        const search = await fetchAllSearchResults(query, headers);
+        // Newest first, so a full search capped at 1000 keeps the most recent PRs
+        const search = await fetchAllSearchResults(query, headers, fullHistory ? { sort: 'updated', order: 'desc' } : {});
         meta.searchRequests += search.requests;
 
         const written = await upsertEvents(Event, search.items, now);
@@ -237,11 +259,21 @@ export async function syncIndex({
         }
         if (search.error) meta.errors.push(search.error);
 
-        const clean = !search.error && !search.incomplete && !search.truncated;
-        if (clean) {
+        const ok = !search.error && !search.incomplete;
+        if (ok && !search.truncated) {
             for (const scope of group.scopes) {
                 await advanceCursor(SyncState, scope.key, now, now);
                 meta.cursorsAdvanced.push(scope.key);
+            }
+        } else if (ok && fullHistory) {
+            // First sync capped at 1000: index from the newest PR fetched onwards.
+            // A scope with nothing in the capped results stays new.
+            const newest = newestMergedAtByScope(search.items);
+            for (const scope of group.scopes) {
+                if (!newest.has(scope.key)) continue;
+                await advanceCursor(SyncState, scope.key, newest.get(scope.key), now, { historyTruncated: true });
+                meta.cursorsAdvanced.push(scope.key);
+                meta.historyTruncated.push(scope.key);
             }
         }
         if (search.rateLimited) break;

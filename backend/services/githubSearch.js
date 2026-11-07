@@ -79,7 +79,8 @@ export async function fetchAllSearchResults(query, headers, options = {}) {
         requests: 0
     };
 
-    let url = `${GITHUB_API}/search/issues?q=${encodeURIComponent(query)}&per_page=${perPage}`;
+    const sort = options.sort ? `&sort=${options.sort}&order=${options.order || 'desc'}` : '';
+    let url = `${GITHUB_API}/search/issues?q=${encodeURIComponent(query)}&per_page=${perPage}${sort}`;
 
     while (url) {
         result.requests++;

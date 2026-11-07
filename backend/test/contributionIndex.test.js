@@ -176,14 +176,52 @@ test('syncIndex: clean first sync advances the cursor with $max and fetches deta
     assert.equal(detailWrite.update.$set.stats.reviewComments, 4);
 });
 
-test('syncIndex: a truncated search is not clean and does not advance cursors', async () => {
-    const { Event, SyncState, calls } = fakeModels();
-    let page = 0;
+/** Search mock: 100 items per page, 5000 total, so results are capped at 1000. */
+function cappedSearch(itemFor) {
+    const state = { pages: 0, urls: [] };
     globalThis.fetch = async (url) => {
-        page++;
-        const items = Array.from({ length: 100 }, (_, i) => searchItem((page - 1) * 100 + i));
-        return jsonResponse({ total_count: 5000, items }, { headers: { link: `<${url}&p=${page + 1}>; rel="next"` } });
+        state.pages++;
+        state.urls.push(url);
+        const items = Array.from({ length: 100 }, (_, i) => itemFor((state.pages - 1) * 100 + i));
+        return jsonResponse({ total_count: 5000, items }, { headers: { link: `<${url}&p=${state.pages + 1}>; rel="next"` } });
     };
+    return state;
+}
+
+test('syncIndex: a truncated first sync sorts newest first and advances to the newest mergedAt', async () => {
+    const { Event, SyncState, calls } = fakeModels();
+    // Newest first; only repo a/one appears in the capped results
+    const search = cappedSearch(n => searchItem(n, {
+        repo: 'a/one',
+        mergedAt: new Date(Date.parse('2026-11-06T00:00:00Z') - n * 60_000).toISOString()
+    }));
+
+    const meta = await syncIndex({
+        scopes: ['a/one', 'a/two'].map(r => ({ key: `repo:${r}`, qualifier: `repo:${r}` })),
+        detailFilter: {},
+        registeredKeys: new Set(['a/one', 'a/two']),
+        headers: {},
+        Event, SyncState, now: NOW
+    });
+
+    assert.equal(search.pages, 10);
+    assert.match(search.urls[0], /&sort=updated&order=desc/);
+    assert.equal(meta.truncated, true);
+    assert.equal(meta.newEvents, 1000);
+    assert.deepEqual(meta.cursorsAdvanced, ['repo:a/one']);
+    assert.deepEqual(meta.historyTruncated, ['repo:a/one']);
+    assert.equal(calls.cursorUpdates.length, 1);
+    const { filter, update } = calls.cursorUpdates[0];
+    assert.deepEqual(filter, { scope: 'repo:a/one' });
+    assert.deepEqual(update.$max, { lastMergedAt: new Date('2026-11-06T00:00:00Z') });
+    assert.equal(update.$set.historyTruncated, true);
+});
+
+test('syncIndex: a truncated incremental search is not clean and does not advance cursors', async () => {
+    const { Event, SyncState, calls } = fakeModels({
+        cursors: [{ scope: 'repo:nodejs/node', lastMergedAt: new Date('2026-10-01T00:00:00Z'), historyTruncated: true }]
+    });
+    const search = cappedSearch(n => searchItem(n));
 
     const meta = await syncIndex({
         scopes: [{ key: 'repo:nodejs/node', qualifier: 'repo:nodejs/node' }],
@@ -193,11 +231,12 @@ test('syncIndex: a truncated search is not clean and does not advance cursors', 
         Event, SyncState, now: NOW
     });
 
-    assert.equal(page, 10);
+    assert.equal(search.pages, 10);
+    assert.doesNotMatch(search.urls[0], /sort=/);
     assert.equal(meta.truncated, true);
     assert.deepEqual(meta.cursorsAdvanced, []);
+    assert.deepEqual(meta.historyTruncated, ['repo:nodejs/node']);
     assert.equal(calls.cursorUpdates.length, 0);
-    assert.equal(meta.newEvents, 1000);
 });
 
 test('syncIndex: repos with cursors share one incremental search; new repos get a full one', async () => {
