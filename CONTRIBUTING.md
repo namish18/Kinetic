@@ -257,7 +257,95 @@ Create a Pull Request against the `main` branch of the original repository.
 
 ---
 
-## 6. Pull Request Guidelines
+## 6. Issue Claiming Process
+
+Before claiming an issue, we expect contributors to understand the project and the problem they intend to solve.
+
+**We do not encourage blindly claiming issues just to reserve them.**
+
+Every contributor must follow this process:
+
+### Step 1: Understand the Repository
+
+Before expressing interest in an issue:
+
+- Go through the project's README and CONTRIBUTING.md.
+- Understand the existing project structure and technology stack.
+- Explore the relevant frontend, backend, or smart contract modules related to the issue.
+- Understand how the existing implementation works.
+- Identify the components or services that might be affected by your proposed changes.
+
+You are not expected to understand the entire codebase, but you should have a reasonable understanding of the modules relevant to your issue.
+
+### Step 2: Analyze the Issue
+
+Read the issue carefully and understand:
+
+- What problem are we trying to solve?
+- Why is this change required?
+- Which parts of the existing implementation are involved?
+- Are there any dependencies or potential side effects?
+- Does the proposed solution respect Kinetic's existing architecture?
+
+If anything is unclear, ask questions in the issue discussion before proceeding.
+
+### Step 3: Submit Your Plan of Action
+
+Before claiming an issue, comment on the GitHub issue with a brief but clear plan of action.
+
+Your comment should include:
+
+1. **Understanding of the problem:** Explain what you understood from the issue.
+2. **Affected components:** Mention the files, modules, services, or features you believe will require changes.
+3. **Proposed approach:** Explain how you intend to implement the solution.
+4. **Testing strategy:** Describe how you will verify that your implementation works correctly.
+
+Your plan does not need to be extremely detailed, but it should demonstrate that you have explored the relevant parts of the repository and thought through the implementation.
+
+### Step 4: Wait for Maintainer Approval
+
+Once you have submitted your plan:
+
+- Wait for a maintainer to review your proposed approach.
+- Maintainers may suggest modifications or ask for clarification.
+- Once your approach is approved, the issue can be assigned to you.
+- You can then begin implementation.
+
+**Please do not start major implementation work or consider an issue officially claimed until the maintainer has approved your approach and assignment.**
+
+### Important Notes
+
+- Do not claim multiple issues simultaneously without prior discussion.
+- Do not submit generic comments such as "I want to work on this" without an implementation plan.
+- Do not claim issues simply to reserve them without actively working on them.
+- If you are unable to continue working on an assigned issue, inform the maintainers so it can be reassigned.
+- Maintainers reserve the right to unassign inactive contributors.
+
+### Example: Issue Claim Comment
+
+A good issue claim comment should look something like this:
+
+> Hi! I've gone through the repository and explored the relevant modules related to this issue.
+>
+> **My understanding:** The issue occurs because [brief explanation of the problem].
+>
+> **Affected components:** I believe the changes will primarily involve [relevant files/modules].
+>
+> **Plan of action:**
+> 1. Investigate the existing implementation.
+> 2. Identify the root cause.
+> 3. Implement the required changes while following the existing architecture.
+> 4. Test the affected workflow and verify that existing functionality remains unaffected.
+>
+> **Testing:** I will test the complete affected workflow locally and check for regressions.
+>
+> I'd appreciate feedback on this approach. Once approved, I'd be happy to take ownership of this issue.
+
+**Remember: Understand first, plan second, claim third, code fourth.**
+
+We value thoughtful contributions and a clear understanding of the project over simply increasing the number of contributors assigned to issues.
+
+## 7. Pull Request Guidelines
 
 We want Pull Requests to be easy to review, understand, and maintain.
 
@@ -288,7 +376,7 @@ Maintainers may request changes before merging. Please be open to feedback and c
 
 ---
 
-## 7. Areas Where You Can Contribute
+## 8. Areas Where You Can Contribute
 
 Here are some areas where contributions can make a difference:
 
@@ -305,7 +393,7 @@ For changes involving core scoring, identity, authentication, or payout logic, a
 
 ---
 
-## 8. Security and Sensitive Information
+## 9. Security and Sensitive Information
 
 Please follow these security practices:
 
@@ -317,7 +405,7 @@ Please follow these security practices:
 
 ---
 
-## 9. Community Expectations
+## 10. Community Expectations
 
 We want Kinetic to be a collaborative and welcoming open-source project.
 
@@ -334,7 +422,7 @@ Quality and meaningful contributions matter more than the number of commits or P
 
 ---
 
-## 10. Final Note
+## 11. Final Note
 
 Kinetic is a community-driven project, and we genuinely appreciate everyone who invests their time and effort into improving it.
 
