@@ -61,7 +61,8 @@ function nextLink(res) {
  * callers can return a partial result instead of crashing or returning 0.
  *
  * @returns {Promise<{ items: object[], totalCount: number, truncated: boolean,
- *   incomplete: boolean, rateLimited: boolean, resetAt: string|null, error: string|null }>}
+ *   incomplete: boolean, rateLimited: boolean, resetAt: string|null, error: string|null,
+ *   requests: number }>}
  */
 export async function fetchAllSearchResults(query, headers, options = {}) {
     const perPage = options.perPage || 100;
@@ -74,12 +75,14 @@ export async function fetchAllSearchResults(query, headers, options = {}) {
         incomplete: false,
         rateLimited: false,
         resetAt: null,
-        error: null
+        error: null,
+        requests: 0
     };
 
     let url = `${GITHUB_API}/search/issues?q=${encodeURIComponent(query)}&per_page=${perPage}`;
 
     while (url) {
+        result.requests++;
         const res = await fetch(url, { headers });
 
         if (!res.ok) {

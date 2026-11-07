@@ -6,11 +6,29 @@
  */
 
 import User from '../models/User.js';
-import {
-    fetchAllSearchResults,
-    fetchPRDetails,
-    repoFullNameFromUrl
-} from './githubSearch.js';
+import ContributionEvent from '../models/ContributionEvent.js';
+import { syncIndex, toPRShape } from './contributionIndex.js';
+
+/**
+ * Sync details reported in a score response's meta.
+ */
+function indexMeta(sync) {
+    return {
+        stale: sync.stale,
+        partial: sync.partial,
+        truncated: sync.truncated,
+        rateLimited: sync.rateLimited,
+        ...(sync.rateLimitResetAt && { rateLimitResetAt: sync.rateLimitResetAt }),
+        ...(sync.errors.length > 0 && { syncError: sync.errors[0] }),
+        githubRequests: sync.githubRequests,
+        searchRequests: sync.searchRequests,
+        detailRequests: sync.detailRequests,
+        detailErrors: sync.detailErrors,
+        newEvents: sync.newEvents,
+        alreadyIndexed: sync.alreadyIndexed,
+        cursorsAdvanced: sync.cursorsAdvanced
+    };
+}
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
@@ -111,38 +129,36 @@ export async function computeContributionScore(username, token, options = {}) {
             }
         }
 
-        // Fetch all merged PRs using the search API (paginated, capped at 1000 by GitHub)
-        const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
-        const search = await fetchAllSearchResults(searchQuery, headers);
-        const searchMeta = {
-            searchTotal: search.totalCount,
-            searchFetched: search.items.length,
-            truncated: search.truncated,
-            rateLimited: search.rateLimited,
-            ...(search.resetAt && { rateLimitResetAt: search.resetAt })
-        };
+        // Sync this author's merged PRs into the contribution index, then score from it
+        const registeredKeys = new Set(Object.keys(registeredRepoMap).map(name => name.toLowerCase()));
+        const authorKey = username.toLowerCase();
+        const sync = await syncIndex({
+            scopes: [{ key: `author:${authorKey}`, qualifier: `author:${username}` }],
+            detailFilter: { authorKey },
+            registeredKeys,
+            headers
+        });
 
-        if (search.items.length === 0) {
+        const events = await ContributionEvent.find({
+            authorKey,
+            type: 'pr_merge',
+            repoKey: { $in: [...registeredKeys] },
+            detailsFetchedAt: { $ne: null }
+        }).sort({ mergedAt: -1 }).lean();
+
+        if (events.length === 0 && sync.stale) {
             return {
                 username, finalScore: 0, prs: [],
-                ...(search.error && { error: search.error }),
-                meta: { prCount: 0, ...searchMeta, partial: Boolean(search.error) }
+                error: sync.errors[0] || 'GitHub API rate limit exceeded',
+                meta: { prCount: 0, source: 'index', ...indexMeta(sync) }
             };
         }
-
-        // Skip the detail request for PRs in repos not registered on the platform.
-        // Case-insensitive so it never drops a PR the exact check below would count.
-        const registeredLower = new Set(Object.keys(registeredRepoMap).map(name => name.toLowerCase()));
-        const candidates = search.items.filter(item =>
-            item.pull_request?.url && registeredLower.has(repoFullNameFromUrl(item.repository_url))
-        );
-        const details = await fetchPRDetails(candidates.map(item => item.pull_request.url), headers);
 
         let totalPoints = 0;
         const prDetails = [];
 
-        for (const prData of details.prs) {
-            if (!prData) continue;
+        for (const event of events) {
+            const prData = toPRShape(event);
 
             const repoFullName = prData.base?.repo?.full_name;
 
@@ -182,14 +198,8 @@ export async function computeContributionScore(username, token, options = {}) {
             meta: {
                 computeTimeMs: Date.now() - (options.startTime || Date.now()),
                 prCount: prDetails.length,
-                ...searchMeta,
-                rateLimited: search.rateLimited || details.rateLimited,
-                ...((search.resetAt || details.resetAt) && { rateLimitResetAt: search.resetAt || details.resetAt }),
-                partial: Boolean(search.error) || search.incomplete || details.rateLimited || details.errors > 0,
-                ...(search.error && { searchError: search.error }),
-                detailRequests: details.requests,
-                detailErrors: details.errors,
-                skippedUnregistered: search.items.length - candidates.length
+                source: 'index',
+                ...indexMeta(sync)
             }
         };
     } catch (error) {
@@ -215,34 +225,32 @@ export async function computeOrgContributors(orgId, token) {
         const repoNames = org.repositories.map(r => r.name);
         if (repoNames.length === 0) return { contributors: [], recentEvents: [] };
 
-        // Search for merged PRs across all organization repositories (paginated)
-        const repoQuery = repoNames.map(name => `repo:${name}`).join(' ');
-        const searchQuery = `${repoQuery} is:pr is:merged updated:>2024-01-01`;
-        const search = await fetchAllSearchResults(searchQuery, headers);
-        const searchMeta = {
-            searchTotal: search.totalCount,
-            searchFetched: search.items.length,
-            truncated: search.truncated,
-            rateLimited: search.rateLimited,
-            partial: Boolean(search.error) || search.incomplete,
-            ...(search.resetAt && { rateLimitResetAt: search.resetAt }),
-            ...(search.error && { searchError: search.error })
-        };
+        // Sync the organization's repositories into the contribution index (one
+        // cursor per repo), then score from the index
+        const repoKeys = new Set(repoNames.map(name => name.toLowerCase()));
+        const sync = await syncIndex({
+            scopes: repoNames.map(name => ({ key: `repo:${name.toLowerCase()}`, qualifier: `repo:${name}` })),
+            detailFilter: {},
+            registeredKeys: repoKeys,
+            headers
+        });
 
-        if (search.items.length === 0) return { contributors: [], recentEvents: [], meta: searchMeta };
+        const events = await ContributionEvent.find({
+            type: 'pr_merge',
+            repoKey: { $in: [...repoKeys] },
+            detailsFetchedAt: { $ne: null }
+        }).sort({ mergedAt: -1 }).lean();
 
-        const prItems = search.items.filter(item => item.pull_request?.url);
-        const details = await fetchPRDetails(prItems.map(item => item.pull_request.url), headers);
+        const meta = { source: 'index', eventCount: events.length, ...indexMeta(sync) };
+        if (events.length === 0) return { contributors: [], recentEvents: [], meta };
 
         const contributorsMap = {};
         const recentEvents = [];
 
-        for (let i = 0; i < prItems.length; i++) {
-            const item = prItems[i];
-            const prData = details.prs[i];
-            if (!prData?.base?.repo) continue;
+        for (const event of events) {
+            const prData = toPRShape(event);
 
-            const username = item.user.login;
+            const username = event.author;
             const repoFullName = prData.base.repo.full_name;
             const repoConfig = org.repositories.find(r => r.name === repoFullName);
             
@@ -256,7 +264,7 @@ export async function computeOrgContributors(orgId, token) {
                     username,
                     totalScore: 0,
                     prCount: 0,
-                    avatar: item.user.avatar_url
+                    avatar: event.authorAvatar
                 };
             }
 
@@ -281,14 +289,7 @@ export async function computeOrgContributors(orgId, token) {
         return {
             contributors: stats.sort((a, b) => b.totalScore - a.totalScore),
             recentEvents: recentEvents.slice(0, 10),
-            meta: {
-                ...searchMeta,
-                rateLimited: searchMeta.rateLimited || details.rateLimited,
-                ...(details.resetAt && { rateLimitResetAt: details.resetAt }),
-                partial: searchMeta.partial || details.rateLimited || details.errors > 0,
-                detailRequests: details.requests,
-                detailErrors: details.errors
-            }
+            meta
         };
 
     } catch (error) {
