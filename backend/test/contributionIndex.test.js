@@ -2,6 +2,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     DETAIL_REFRESH_DAYS,
+    DETAIL_REFRESH_MIN_AGE_HOURS,
     buildSearchQuery,
     detailsFromPR,
     eventFromSearchItem,
@@ -101,15 +102,20 @@ test('an indexed event scores exactly like the raw GitHub PR', () => {
     assert.equal(toPRShape(event).merged_at, rawPR.merged_at);
 });
 
-test('needsDetails: missing details, recent refresh window, registered repos only', () => {
+test('needsDetails: missing details, recent refresh window at most once a day, registered repos only', () => {
     const registered = new Set(['nodejs/node']);
     const base = { repoKey: 'nodejs/node' };
     const recent = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS - 1) * DAY);
     const old = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS + 1) * DAY);
+    const HOUR = 60 * 60 * 1000;
+    const fetchedOld = new Date(NOW.getTime() - (DETAIL_REFRESH_MIN_AGE_HOURS + 1) * HOUR);
+    const fetchedRecently = new Date(NOW.getTime() - (DETAIL_REFRESH_MIN_AGE_HOURS - 1) * HOUR);
 
     assert.equal(needsDetails({ ...base, detailsFetchedAt: null, mergedAt: old }, registered, NOW), true);
-    assert.equal(needsDetails({ ...base, detailsFetchedAt: NOW, mergedAt: recent }, registered, NOW), true);
-    assert.equal(needsDetails({ ...base, detailsFetchedAt: NOW, mergedAt: old }, registered, NOW), false);
+    assert.equal(needsDetails({ ...base, detailsFetchedAt: null, mergedAt: NOW }, registered, NOW), true);
+    assert.equal(needsDetails({ ...base, detailsFetchedAt: fetchedOld, mergedAt: recent }, registered, NOW), true);
+    assert.equal(needsDetails({ ...base, detailsFetchedAt: fetchedRecently, mergedAt: recent }, registered, NOW), false);
+    assert.equal(needsDetails({ ...base, detailsFetchedAt: fetchedOld, mergedAt: old }, registered, NOW), false);
     assert.equal(needsDetails({ repoKey: 'other/repo', detailsFetchedAt: null, mergedAt: recent }, registered, NOW), false);
 });
 

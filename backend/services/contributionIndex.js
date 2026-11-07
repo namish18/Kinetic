@@ -21,6 +21,8 @@ import { fetchAllSearchResults, fetchPRDetails } from './githubSearch.js';
 // Re-fetch details for PRs merged this recently, so review comments added
 // shortly after merge are still counted.
 export const DETAIL_REFRESH_DAYS = 14;
+// ...but at most once per this many hours per PR.
+export const DETAIL_REFRESH_MIN_AGE_HOURS = 24;
 
 // First (full) sync uses the same window as the original search.
 const FIRST_SYNC_QUALIFIER = 'updated:>2024-01-01';
@@ -28,7 +30,8 @@ const FIRST_SYNC_QUALIFIER = 'updated:>2024-01-01';
 // Search results can lag behind merges; re-read this much before the cursor.
 const CURSOR_OVERLAP_MS = 24 * 60 * 60 * 1000;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 function isoSeconds(date) {
     return new Date(date).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -114,12 +117,14 @@ export function toPRShape(event) {
 
 /**
  * True when an event in a registered repo has no details yet, or was merged
- * within the refresh window.
+ * within the refresh window and its details are older than the minimum age.
  */
 export function needsDetails(event, registeredKeys, now = new Date()) {
     if (!registeredKeys.has(event.repoKey)) return false;
     if (!event.detailsFetchedAt) return true;
-    return Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
+    const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
+    const detailsOld = new Date(event.detailsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
+    return recentlyMerged && detailsOld;
 }
 
 function duplicateKeyOnly(error) {
