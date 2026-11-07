@@ -6,6 +6,10 @@
  */
 
 import User from '../models/User.js';
+import { calculateSpamPenalty } from './kineticMechanisms.js';
+import AlgorithmVersion from '../models/AlgorithmVersion.js';
+import ContributionScore from '../models/ContributionScore.js';
+import { recordContributionEvidence, fetchCIEvidence, shouldRecordEvidence } from './evidenceService.js';
 import ContributionEvent from '../models/ContributionEvent.js';
 import { syncIndex, toPRShape } from './contributionIndex.js';
 
@@ -30,14 +34,6 @@ function indexMeta(sync) {
         cursorsAdvanced: sync.cursorsAdvanced
     };
 }
-import {
-    fetchAllSearchResults,
-    fetchPRDetails,
-    repoFullNameFromUrl
-} from './githubSearch.js';
-import { calculateSpamPenalty } from './kineticMechanisms.js';
-import AlgorithmVersion from '../models/AlgorithmVersion.js';
-import ContributionScore from '../models/ContributionScore.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
@@ -108,7 +104,7 @@ export function calculateHistoricalReputation(evidence = {}, customWeights = {})
         delta: customWeights.delta ?? DEFAULT_REPUTATION_WEIGHTS.delta
     };
 
-    const rawReputation = 
+    const rawReputation =
         (weights.alpha * acceptedPRs) +
         (weights.beta * avgReviewScore) +
         (weights.gamma * historicalImpact) +
@@ -188,6 +184,8 @@ export async function getContributorReputation(username, token, customWeights = 
             weights: { ...DEFAULT_REPUTATION_WEIGHTS, ...customWeights }
         };
     }
+}
+
 // ─────────────────────────────────────────────────────────────
 //  Algorithm Versioning
 // ─────────────────────────────────────────────────────────────
@@ -245,7 +243,7 @@ export function extractPRMetrics(pr) {
     const impact = Math.min(1.0, impactRaw);
 
     // 3. Quality (proxy: based on deletions/refactor ratio)
-    let quality = 0.8; 
+    let quality = 0.8;
     if (pr.deletions > pr.additions) quality += 0.1; // refactor bonus
     if (pr.merged === true) quality += 0.1; // merge bonus
     quality = Math.min(1.0, quality);
@@ -255,7 +253,7 @@ export function extractPRMetrics(pr) {
     const review = Math.min(1.0, reviewRaw + 0.5);
 
     // 5. Priority (proxy based on repo popularity or labels)
-    const hasPriorityLabel = pr.labels && pr.labels.some(l => 
+    const hasPriorityLabel = pr.labels && pr.labels.some(l =>
         ['priority', 'high', 'critical', 'urgent'].some(k => l.name.toLowerCase().includes(k))
     );
     const priority = hasPriorityLabel ? 1.0 : 0.4;
@@ -280,7 +278,7 @@ export function calculatePRScore(metrics, weights, context = {}) {
     const w = weights || { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 };
 
     // Step 2: Base Score (Weighted average of 5 dimensions)
-    const baseScore = 
+    const baseScore =
         (w.impact * metrics.impact) +
         (w.complexity * metrics.complexity) +
         (w.quality * metrics.quality) +
@@ -289,11 +287,11 @@ export function calculatePRScore(metrics, weights, context = {}) {
 
     // Step 3: Reputation Multiplier
     const rawReputation = context.reputation || 0;
-    const R_max = 500; 
+    const R_max = 500;
     const R_norm = Math.max(0, Math.log(rawReputation + 1) / Math.log(R_max + 1));
-    
+
     let repMult = 1 + (REPUTATION_INFLUENCE_LAMBDA * Math.min(1.0, R_norm));
-    repMult = Math.min(1.5, repMult); 
+    repMult = Math.min(1.5, repMult);
 
     // Step 4: Velocity Spam Penalty
     const prTimestamps = context.timestamps || [];
@@ -367,30 +365,9 @@ export async function computeContributionScore(username, token, options = {}) {
                 error: sync.errors[0] || 'GitHub API rate limit exceeded',
                 meta: { prCount: 0, source: 'index', ...indexMeta(sync) }
             };
-        // Fetch merged PRs using GitHub search API
-        const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
-        const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=15`, { headers });
-        const searchData = await searchRes.json();
-        
-        if (!searchData.items || searchData.items.length === 0) {
-            return {
-                username,
-                finalScore: 0,
-                reputation: 0,
-                prs: [],
-                meta: {
-                    computeTimeMs: Date.now() - (options.startTime || Date.now()),
-                    prCount: 0
-                }
-            };
         }
 
         const validPRRecords = [];
-            return { username, finalScore: 0, algorithmVersion: ALGORITHM_VERSION, prs: [], meta: { prCount: 0 } };
-        }
-
-        let totalPoints = 0;
-        const prDetails = [];
         const prTimestamps = [];
 
         for (const event of events) {
@@ -410,7 +387,6 @@ export async function computeContributionScore(username, token, options = {}) {
 
             const metrics = extractPRMetrics(prData);
             validPRRecords.push({
-                item,
                 prData,
                 repoFullName,
                 repoConfig,
@@ -424,6 +400,7 @@ export async function computeContributionScore(username, token, options = {}) {
             return {
                 username,
                 finalScore: 0,
+                algorithmVersion: ALGORITHM_VERSION,
                 reputation: 0,
                 prs: [],
                 meta: {
@@ -454,31 +431,33 @@ export async function computeContributionScore(username, token, options = {}) {
 
         for (const record of validPRRecords) {
             // Integrate historical reputation into PR scoring
-            const result = calculatePRScore(record.metrics, record.weights, { reputation: contributorReputation });
-            const result = calculatePRScore(metrics, weights, { 
-                reputation: userRepos.length * 10,
-                timestamps: prTimestamps 
+            const result = calculatePRScore(record.metrics, record.weights, {
+                reputation: contributorReputation,
+                timestamps: prTimestamps
             });
 
             const prPoints = Math.round(result.score * 20 * 10) / 10;
             totalPoints += prPoints;
 
+            const scoreKey = { username, repository: record.repoFullName, prNumber: record.prData.number };
+            const previousScore = await ContributionScore.findOne(scoreKey).select('score evidenceCID').lean().catch(() => null);
+
             // ── Persist score with algorithm version + config snapshot ──
             try {
                 await ContributionScore.findOneAndUpdate(
-                    { username, repository: repoFullName, prNumber: prData.number },
+                    scoreKey,
                     {
                         $set: {
                             score: prPoints,
                             algorithmVersion: ALGORITHM_VERSION,
                             configurationSnapshot: {
                                 algorithm: getAlgorithmConfiguration(),
-                                weights: result.details?.weights || weights || getAlgorithmConfiguration().defaultWeights,
-                                repoConfig: repoConfig
+                                weights: result.details?.weights || record.weights || getAlgorithmConfiguration().defaultWeights,
+                                repoConfig: record.repoConfig
                                     ? {
-                                        name: repoConfig.name,
-                                        weights: repoConfig.weights,
-                                        bountyPool: repoConfig.bountyPool
+                                        name: record.repoConfig.name,
+                                        weights: record.repoConfig.weights,
+                                        bountyPool: record.repoConfig.bountyPool
                                     }
                                     : null,
                             },
@@ -489,6 +468,26 @@ export async function computeContributionScore(username, token, options = {}) {
                 );
             } catch (dbErr) {
                 console.error('Failed to persist contribution score:', dbErr.message);
+            }
+
+            // Store the evidence package on IPFS and link its CID to this contribution
+            if (shouldRecordEvidence(previousScore, prPoints)) {
+                const ci = await fetchCIEvidence({
+                    repository: record.repoFullName,
+                    prNumber: record.prData.number,
+                    token: githubToken
+                });
+                await recordContributionEvidence({
+                    contribution: {
+                        ...scoreKey,
+                        prUrl: record.prData.html_url,
+                        mergedAt: record.prData.merged_at
+                    },
+                    ci,
+                    scoreInputs: { ...record.metrics, reputation: contributorReputation, weights: result.details?.weights },
+                    score: prPoints,
+                    algorithm: { name: ALGORITHM_NAME, version: ALGORITHM_VERSION }
+                });
             }
 
             prDetails.push({
@@ -516,9 +515,9 @@ export async function computeContributionScore(username, token, options = {}) {
         return {
             username,
             finalScore,
+            algorithmVersion: ALGORITHM_VERSION,
             reputation: contributorReputation,
             reputationEvidence: repEvidence,
-            algorithmVersion: ALGORITHM_VERSION,
             prs: prDetails,
             meta: {
                 computeTimeMs: Date.now() - (options.startTime || Date.now()),
@@ -572,36 +571,19 @@ export async function computeOrgContributors(orgId, token) {
         const contributorsMap = {};
         const recentEvents = [];
 
+        // 1. Group indexed PRs by contributor
+        const contributorPRMap = {};
         for (const event of events) {
             const prData = toPRShape(event);
 
             const username = event.author;
             const repoFullName = prData.base.repo.full_name;
-        // 1. Fetch PR details and group by contributor
-        const contributorPRMap = {};
-        for (const item of searchData.items) {
-            const username = item.user?.login;
-            if (!username) continue;
-
-            const prUrl = item.pull_request?.url;
-            if (!prUrl) continue;
-
-            const prRes = await fetch(prUrl, { headers });
-            const prData = await prRes.json();
-
-            const repoFullName = prData.base?.repo?.full_name;
             const repoConfig = org.repositories.find(r => r.name === repoFullName);
             const metrics = extractPRMetrics(prData);
 
-            if (!contributorsMap[username]) {
-                contributorsMap[username] = {
-                    username,
-                    totalScore: 0,
-                    prCount: 0,
-                    avatar: event.authorAvatar
             if (!contributorPRMap[username]) {
                 contributorPRMap[username] = {
-                    user: item.user,
+                    user: { avatar_url: event.authorAvatar },
                     prs: []
                 };
             }

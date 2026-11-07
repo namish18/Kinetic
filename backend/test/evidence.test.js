@@ -7,6 +7,7 @@ import {
     storeEvidencePackage,
     recordContributionEvidence,
     fetchCIEvidence,
+    shouldRecordEvidence,
     isValidCid
 } from '../services/evidenceService.js';
 
@@ -163,5 +164,44 @@ describe('fetchCIEvidence', () => {
         });
         assert.equal(ci.verified, null);
         assert.deepEqual(ci.runs, []);
+    });
+});
+
+describe('fetchCIEvidence with only a PR number', () => {
+    it('looks up the merge commit, then reads its check runs', async () => {
+        const urls = [];
+        const fetchFn = async url => {
+            urls.push(url);
+            if (url.includes('/pulls/')) return { ok: true, json: async () => ({ merge_commit_sha: 'deadbeef' }) };
+            return { ok: true, json: async () => ({ check_runs: [{ name: 'build', status: 'completed', conclusion: 'success' }] }) };
+        };
+        const ci = await fetchCIEvidence({ repository: 'org/repo', prNumber: 7, fetchFn });
+        assert.equal(ci.commitSha, 'deadbeef');
+        assert.equal(ci.verified, true);
+        assert.ok(urls[1].includes('/commits/deadbeef/check-runs'));
+    });
+
+    it('leaves verified null when the merge commit cannot be found', async () => {
+        const ci = await fetchCIEvidence({ repository: 'org/repo', prNumber: 7, fetchFn: async () => ({ ok: false }) });
+        assert.equal(ci.verified, null);
+        assert.equal(ci.commitSha, null);
+    });
+});
+
+describe('shouldRecordEvidence', () => {
+    it('records when there is no previous evidence', async () => {
+        assert.equal(shouldRecordEvidence(null, 10), true);
+        assert.equal(shouldRecordEvidence({ score: 10, evidenceCID: null }, 10), true);
+        assert.equal(shouldRecordEvidence({ score: 10, evidenceCID: 'sha256-fake' }, 10), true);
+    });
+
+    it('skips when the score is unchanged and a real CID exists', async () => {
+        const cid = await realCid();
+        assert.equal(shouldRecordEvidence({ score: 10, evidenceCID: cid }, 10), false);
+    });
+
+    it('records again when the score changed', async () => {
+        const cid = await realCid();
+        assert.equal(shouldRecordEvidence({ score: 10, evidenceCID: cid }, 12), true);
     });
 });

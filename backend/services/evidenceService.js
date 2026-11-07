@@ -29,21 +29,28 @@ export function isValidCid(value) {
 }
 
 /**
- * Fetches public CI evidence (check runs) for a commit.
- * The token is only used for the request and is never part of the result.
+ * Fetches public CI evidence (check runs) for a merged PR's commit.
+ * If only the PR number is known, the merge commit is looked up first.
+ * The token is only used for the requests and is never part of the result.
  * If CI info can't be read, verified stays null instead of guessing.
  */
-export async function fetchCIEvidence({ repository, commitSha, token, fetchFn = fetch }) {
-    const empty = { commitSha: commitSha || null, verified: null, runs: [] };
-    if (!repository || !commitSha) return empty;
+export async function fetchCIEvidence({ repository, prNumber, commitSha, token, fetchFn = fetch }) {
+    const headers = {
+        Accept: 'application/vnd.github.v3+json',
+        ...(token && { Authorization: `Bearer ${token}` })
+    };
 
     try {
-        const res = await fetchFn(`https://api.github.com/repos/${repository}/commits/${commitSha}/check-runs`, {
-            headers: {
-                Accept: 'application/vnd.github.v3+json',
-                ...(token && { Authorization: `Bearer ${token}` })
-            }
-        });
+        let sha = commitSha || null;
+        if (!sha && repository && prNumber !== undefined) {
+            const prRes = await fetchFn(`https://api.github.com/repos/${repository}/pulls/${prNumber}`, { headers });
+            if (prRes.ok) sha = (await prRes.json()).merge_commit_sha || null;
+        }
+
+        const empty = { commitSha: sha, verified: null, runs: [] };
+        if (!repository || !sha) return empty;
+
+        const res = await fetchFn(`https://api.github.com/repos/${repository}/commits/${sha}/check-runs`, { headers });
         if (!res.ok) return empty;
 
         const data = await res.json();
@@ -53,10 +60,19 @@ export async function fetchCIEvidence({ repository, commitSha, token, fetchFn = 
             conclusion: r.conclusion ?? null
         }));
         const verified = runs.length > 0 && runs.every(r => r.status === 'completed' && r.conclusion === 'success');
-        return { commitSha, verified, runs };
+        return { commitSha: sha, verified, runs };
     } catch {
-        return empty;
+        return { commitSha: commitSha || null, verified: null, runs: [] };
     }
+}
+
+/**
+ * Evidence is only (re)built when a contribution has none yet,
+ * or when its score changed since the last package was stored.
+ */
+export function shouldRecordEvidence(previous, newScore) {
+    if (!previous || !isValidCid(previous.evidenceCID)) return true;
+    return previous.score !== newScore;
 }
 
 /**
