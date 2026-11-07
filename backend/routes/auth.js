@@ -73,6 +73,8 @@ router.get('/me', authenticateToken, async (req, res) => {
                 ipfsCID: user.ipfsCID,
                 wallet: user.wallet,
                 role: user.role,
+                reputation: user.reputation || 0,
+                reputationEvidence: user.reputationEvidence || null,
                 repositories: user.repositories,
                 didDocument: user.didDocument,
                 createdAt: user.createdAt,
