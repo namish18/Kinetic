@@ -37,6 +37,12 @@ const contributionScoreSchema = new mongoose.Schema(
         calculatedAt: {
             type: Date,
             default: Date.now
+        },
+
+        // CID of the IPFS evidence package for this contribution (null until stored)
+        evidenceCID: {
+            type: String,
+            default: null
         }
     },
     {
