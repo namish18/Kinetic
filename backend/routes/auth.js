@@ -3,6 +3,7 @@ import passport from 'passport';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { getFromIPFS, authenticateDID } from '../services/didService.js';
+import { validateGithubUsernameParam, validateFlowWallet } from '../middleware/validate.js';
 
 const router = express.Router();
 
@@ -92,7 +93,7 @@ router.get('/me', authenticateToken, async (req, res) => {
  * Public endpoint — resolve a did:key by GitHub username.
  * Returns both the MongoDB index record and the live IPFS document.
  */
-router.get('/did/:username', async (req, res) => {
+router.get('/did/:username', validateGithubUsernameParam('username'), async (req, res) => {
     try {
         const user = await User.findOne({ github: req.params.username });
         if (!user) {
@@ -164,11 +165,9 @@ router.get('/did-resolve/self', authenticateToken, async (req, res) => {
  * PUT /api/auth/wallet
  * Link a Flow wallet address to the user's DID (JWT required)
  */
-router.put('/wallet', authenticateToken, async (req, res) => {
+router.put('/wallet', authenticateToken, validateFlowWallet, async (req, res) => {
     try {
         const { wallet } = req.body;
-        if (!wallet) return res.status(400).json({ error: 'Wallet address is required' });
-
         const user = await User.findByIdAndUpdate(req.user.id, { wallet }, { new: true });
 
         res.json({
