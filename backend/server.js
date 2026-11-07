@@ -11,6 +11,8 @@ import './config/passport.js';
 import authRoutes from './routes/auth.js';
 import contributionRoutes from './routes/contribution.js';
 import kineticRoutes from './routes/kinetic.js';
+import orgRoutes from './routes/repo.js';
+import payoutLifecycleRoutes from './routes/payoutLifecycle.js';
 import repoRoutes from './routes/repo.js';
 import webhookRoutes from './routes/webhook.js';
 import { stopHelia } from './services/didService.js';
@@ -57,6 +59,8 @@ app.use(passport.session());
 app.use('/api/auth', authRoutes);
 app.use('/api/contribution', contributionRoutes);
 app.use('/api/kinetic', kineticRoutes);
+app.use('/api/org', orgRoutes);
+app.use('/api/org/payouts', payoutLifecycleRoutes);
 app.use('/api/org', repoRoutes);
 app.use('/api/webhook', webhookRoutes);
 
