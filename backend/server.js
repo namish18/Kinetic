@@ -26,6 +26,7 @@ import kineticRoutes from './routes/kinetic.js';
 import orgRoutes from './routes/repo.js';
 import webhookRoutes from './routes/webhook.js';
 import { stopHelia } from './services/didService.js';
+import { ensureAlgorithmVersion } from './services/contributionService.js';
 
 // (env vars loaded via import 'dotenv/config' at top)
 
@@ -35,6 +36,11 @@ const __dirname = path.dirname(__filename);
 
 // Connect to database
 connectDB();
+
+// Seed the active scoring algorithm version
+ensureAlgorithmVersion()
+    .then(v => console.log(`🧮 Algorithm version active: ${v.version}`))
+    .catch(e => console.error('Algorithm version seed failed:', e.message));
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -76,7 +82,7 @@ app.get('/api', (_req, res) => {
         stack: {
             didGeneration: 'key-did-provider-ed25519 (Ceramic / Protocol Labs)',
             didResolution: 'key-did-resolver (Ceramic / Protocol Labs)',
-            ipfsStorage: 'Helia in-process IPFS node (Protocol Labs) — no account needed',
+            ipfsStorage: 'Helia in-process node (Protocol Labs) — no account needed',
         },
         endpoints: {
             'GET /api/auth/github': 'Begin GitHub OAuth flow',
