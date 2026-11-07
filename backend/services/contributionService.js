@@ -7,9 +7,55 @@
 
 import User from '../models/User.js';
 import { calculateSpamPenalty } from './kineticMechanisms.js';
+import AlgorithmVersion from '../models/AlgorithmVersion.js';
+import ContributionScore from '../models/ContributionScore.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
+
+// ─────────────────────────────────────────────────────────────
+//  Algorithm Versioning
+// ─────────────────────────────────────────────────────────────
+
+export const ALGORITHM_VERSION = 'msts-v2.0.0';
+export const ALGORITHM_NAME = 'MSTS Contribution Scoring';
+
+/**
+ * Returns the exact configuration used by the scoring algorithm.
+ */
+export function getAlgorithmConfiguration() {
+    return {
+        maxLines: MAX_LINES,
+        reputationInfluenceLambda: REPUTATION_INFLUENCE_LAMBDA,
+        reputationMax: 500,
+        reputationMultiplierCap: 1.5,
+        filters: {
+            minQuality: 0.3,
+            minReview: 0.3,
+            spamImpact: 0.2,
+            spamComplexity: 0.2,
+        },
+        defaultWeights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 },
+        pointsScale: 20,
+        scoreCap: 100,
+    };
+}
+
+/**
+ * Ensures the current algorithm version exists in DB and is the only active one.
+ */
+export async function ensureAlgorithmVersion() {
+    const config = getAlgorithmConfiguration();
+    await AlgorithmVersion.updateMany(
+        { version: { $ne: ALGORITHM_VERSION } },
+        { isActive: false }
+    );
+    return AlgorithmVersion.findOneAndUpdate(
+        { version: ALGORITHM_VERSION },
+        { $setOnInsert: { name: ALGORITHM_NAME, configuration: config }, isActive: true },
+        { upsert: true, new: true }
+    );
+}
 
 /**
  * Derives normalized inputs for the algorithm from a GitHub PR object
@@ -129,7 +175,7 @@ export async function computeContributionScore(username, token, options = {}) {
         const searchData = await searchRes.json();
         
         if (!searchData.items || searchData.items.length === 0) {
-            return { username, finalScore: 0, prs: [], meta: { prCount: 0 } };
+            return { username, finalScore: 0, algorithmVersion: ALGORITHM_VERSION, prs: [], meta: { prCount: 0 } };
         }
 
         let totalPoints = 0;
@@ -163,11 +209,40 @@ export async function computeContributionScore(username, token, options = {}) {
             const prPoints = Math.round(result.score * 20 * 10) / 10;
             totalPoints += prPoints;
 
+            // ── Persist score with algorithm version + config snapshot ──
+            try {
+                await ContributionScore.findOneAndUpdate(
+                    { username, repository: repoFullName, prNumber: prData.number },
+                    {
+                        $set: {
+                            score: prPoints,
+                            algorithmVersion: ALGORITHM_VERSION,
+                            configurationSnapshot: {
+                                algorithm: getAlgorithmConfiguration(),
+                                weights: result.details?.weights || weights || getAlgorithmConfiguration().defaultWeights,
+                                repoConfig: repoConfig
+                                    ? {
+                                        name: repoConfig.name,
+                                        weights: repoConfig.weights,
+                                        bountyPool: repoConfig.bountyPool
+                                    }
+                                    : null,
+                            },
+                            calculatedAt: new Date(),
+                        },
+                    },
+                    { upsert: true, new: true }
+                );
+            } catch (dbErr) {
+                console.error('Failed to persist contribution score:', dbErr.message);
+            }
+
             prDetails.push({
                 id: prData.number,
                 title: prData.title,
                 repo: repoFullName,
                 score: prPoints,
+                algorithmVersion: ALGORITHM_VERSION,
                 status: 'merged',
                 date: prData.merged_at?.split('T')[0] || 'N/A',
                 link: prData.html_url
@@ -179,6 +254,7 @@ export async function computeContributionScore(username, token, options = {}) {
         return {
             username,
             finalScore,
+            algorithmVersion: ALGORITHM_VERSION,
             prs: prDetails,
             meta: {
                 computeTimeMs: Date.now() - (options.startTime || Date.now()),
