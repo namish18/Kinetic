@@ -37,6 +37,30 @@ const contributionScoreSchema = new mongoose.Schema(
         calculatedAt: {
             type: Date,
             default: Date.now
+        },
+
+        // CID of the IPFS evidence package for this contribution (null until stored)
+        evidenceCID: {
+            type: String,
+            default: null
+        },
+
+        // sha256 of the stored evidence package; changes whenever the evidence changes
+        evidenceDigest: {
+            type: String,
+            default: null
+        },
+
+        // true while CI results were still running or unreadable when the package was built
+        evidencePending: {
+            type: Boolean,
+            default: false
+        },
+
+        // when evidence was last checked against GitHub
+        evidenceCheckedAt: {
+            type: Date,
+            default: null
         }
     },
     {
