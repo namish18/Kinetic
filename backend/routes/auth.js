@@ -3,6 +3,7 @@ import passport from 'passport';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { getFromIPFS, authenticateDID } from '../services/didService.js';
+import { validateGithubUsernameParam, validateFlowWallet } from '../middleware/validate.js';
 
 const router = express.Router();
 
@@ -67,6 +68,8 @@ router.get('/me', authenticateToken, async (req, res) => {
                 ipfsCID: user.ipfsCID,
                 wallet: user.wallet,
                 role: user.role,
+                reputation: user.reputation || 0,
+                reputationEvidence: user.reputationEvidence || null,
                 repositories: user.repositories,
                 didDocument: user.didDocument,
                 createdAt: user.createdAt,
@@ -86,7 +89,7 @@ router.get('/me', authenticateToken, async (req, res) => {
  * GET /api/auth/did/:username
  * Public endpoint — resolve a did:key by GitHub username.
  */
-router.get('/did/:username', async (req, res) => {
+router.get('/did/:username', validateGithubUsernameParam('username'), async (req, res) => {
     try {
         const user = await User.findOne({ github: req.params.username });
         if (!user) {
@@ -150,11 +153,9 @@ router.get('/did-resolve/self', authenticateToken, async (req, res) => {
 /**
  * PUT /api/auth/wallet
  */
-router.put('/wallet', authenticateToken, async (req, res) => {
+router.put('/wallet', authenticateToken, validateFlowWallet, async (req, res) => {
     try {
         const { wallet } = req.body;
-        if (!wallet) return res.status(400).json({ error: 'Wallet address is required' });
-
         const user = await User.findByIdAndUpdate(req.user.id, { wallet }, { new: true });
 
         res.json({

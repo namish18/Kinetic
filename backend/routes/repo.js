@@ -3,8 +3,21 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
 import { computeOrgContributors } from '../services/contributionService.js';
+ feature/payout-idempotency-epoch
 import Payout from '../models/Payout.js';
 
+
+ fix/remove-fallback-wallet-repo
+
+import {
+    validateAddRepository,
+    validateRepoIdParam,
+    validateUpdateBranches,
+    validateRepoConfig,
+    normalizeRepoName
+} from '../middleware/validate.js';
+ main
+ main
 
 const router = express.Router();
 
@@ -21,6 +34,11 @@ function authenticateToken(req, res, next) {
     }
 }
 
+ fix/remove-fallback-wallet-repo
+
+import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
+
+ main
 /**
  * GET /api/org/all
  * Public endpoint to get all repositories across the platform.
@@ -36,6 +54,7 @@ router.get('/all', async (req, res) => {
                     owner: u.github,
                     ownerAvatar: u.avatarUrl || `https://github.com/${u.github}.png`,
                     weights: r.weights,
+                    reputationWeights: r.reputationWeights || DEFAULT_REPUTATION_WEIGHTS,
                     totalPool: 1000 + (r.name.length * 50), // Semi-stable pool
                     activePRs: 5 + (r.name.length % 5)
                 });
@@ -74,6 +93,7 @@ router.get('/info', authenticateToken, async (req, res) => {
 });
 
 /**
+ fix/remove-fallback-wallet-repo
  * Normalize a repo identifier to "owner/repo" format.
  * Accepts full GitHub URLs, github.com/owner/repo, or plain owner/repo.
  */
@@ -89,14 +109,13 @@ function normalizeRepoName(input) {
 }
 
 /**
+
+main
  * POST /api/org/repositories
  */
-router.post('/repositories', authenticateToken, async (req, res) => {
+router.post('/repositories', authenticateToken, validateAddRepository, async (req, res) => {
     try {
-        const { repository } = req.body;
-        if (!repository) return res.status(400).json({ error: 'Repository name required' });
-
-        const repoName = normalizeRepoName(repository); // always store as owner/repo
+        const repoName = req.normalizedRepo; // validated & normalized "owner/repo"
 
         const user = await User.findById(req.user.id);
         const exists = user.repositories.find(r => r.name === repoName);
@@ -104,7 +123,8 @@ router.post('/repositories', authenticateToken, async (req, res) => {
             user.repositories.push({
                 name: repoName,
                 targetBranches: ['main'],
-                weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 }
+                weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 },
+                reputationWeights: DEFAULT_REPUTATION_WEIGHTS
             });
             await user.save();
         }
@@ -118,9 +138,13 @@ router.post('/repositories', authenticateToken, async (req, res) => {
  * GET /api/org/repositories/:repoId/branches
  * Fetch all branches for a repository from GitHub API
  */
-router.get('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
+router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), async (req, res) => {
     try {
+ fix/remove-fallback-wallet-repo
         const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+
+        const repoName = req.normalizedRepoId;
+ main
         const pat = process.env.GITHUB_PAT;
 
         const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Kinetic-App' };
@@ -236,9 +260,13 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
 /**
  * PUT /api/org/repositories/:repoId/branches
  */
+fix/remove-fallback-wallet-repo
 router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
+
+router.put('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), validateUpdateBranches, async (req, res) => {
+main
     try {
-        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        const repoName = req.normalizedRepoId;
         const { targetBranches } = req.body;
 
         const user = await User.findById(req.user.id);
@@ -257,9 +285,11 @@ router.put('/repositories/:repoId/branches', authenticateToken, async (req, res)
  * PUT /api/org/repositories/:repoId/config
  * Update multiple repo settings at once
  */
-router.put('/repositories/:repoId/config', authenticateToken, async (req, res) => {
+router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdParam('repoId'), validateRepoConfig, async (req, res) => {
     try {
         const repoName = decodeURIComponent(req.params.repoId);
+        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
+        const repoName = req.normalizedRepoId;
         const { targetBranches, weights, bountyPool } = req.body;
 
         const user = await User.findById(req.user.id);
@@ -274,6 +304,14 @@ router.put('/repositories/:repoId/config', authenticateToken, async (req, res) =
                 quality: weights.quality ?? repo.weights.quality,
                 review: weights.review ?? repo.weights.review,
                 priority: weights.priority ?? repo.weights.priority
+            };
+        }
+        if (reputationWeights) {
+            repo.reputationWeights = {
+                alpha: reputationWeights.alpha ?? repo.reputationWeights?.alpha ?? DEFAULT_REPUTATION_WEIGHTS.alpha,
+                beta: reputationWeights.beta ?? repo.reputationWeights?.beta ?? DEFAULT_REPUTATION_WEIGHTS.beta,
+                gamma: reputationWeights.gamma ?? repo.reputationWeights?.gamma ?? DEFAULT_REPUTATION_WEIGHTS.gamma,
+                delta: reputationWeights.delta ?? repo.reputationWeights?.delta ?? DEFAULT_REPUTATION_WEIGHTS.delta
             };
         }
         if (typeof bountyPool === 'number') repo.bountyPool = bountyPool;
@@ -332,4 +370,8 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
     }
 });
 
+ fix/remove-fallback-wallet-repo
 export default router;
+
+export default router;
+main
