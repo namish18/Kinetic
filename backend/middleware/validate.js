@@ -612,3 +612,105 @@ export function validateQuadraticFunding(req, res, next) {
     next();
 }
 
+/**
+ * Validates whether an input is a valid 32-byte Ed25519 public key.
+ * Accepts 64-char hex string (optionally 0x prefixed) or 44-char base64 string.
+ */
+export function isValidEd25519PublicKey(key) {
+    if (typeof key !== 'string') return false;
+    const trimmed = key.trim();
+    if (/^(0x)?[0-9a-fA-F]{64}$/.test(trimmed)) {
+        return true;
+    }
+    // Base64 32 bytes = 44 characters (ending in =)
+    if (/^[A-Za-z0-9+/]{43}=$/.test(trimmed)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Validates whether an input is a valid 64-byte Ed25519 signature.
+ * Accepts 128-char hex string (optionally 0x prefixed) or 88-char base64 string.
+ */
+export function isValidEd25519Signature(sig) {
+    if (typeof sig !== 'string') return false;
+    const trimmed = sig.trim();
+    if (/^(0x)?[0-9a-fA-F]{128}$/.test(trimmed)) {
+        return true;
+    }
+    // Base64 64 bytes = 88 characters (ending in ==)
+    if (/^[A-Za-z0-9+/]{86}==$/.test(trimmed)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Middleware: Validates contributor DID registration payload.
+ * Used on POST /api/auth/register-did
+ */
+export function validateRegisterDID(req, res, next) {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+        return sendValidationError(res, {
+            field: 'body',
+            message: 'Request payload must be a JSON object.'
+        });
+    }
+
+    const { publicKey, signature, message } = req.body;
+    const errors = [];
+
+    const allowedKeys = ['publicKey', 'signature', 'message'];
+    const unknownKeys = Object.keys(req.body).filter(k => !allowedKeys.includes(k));
+    if (unknownKeys.length > 0) {
+        errors.push({
+            field: 'body',
+            message: `Unexpected field(s): ${unknownKeys.join(', ')}. Only 'publicKey', 'signature', and 'message' are allowed.`
+        });
+    }
+
+    if (!publicKey || typeof publicKey !== 'string' || publicKey.trim().length === 0) {
+        errors.push({
+            field: 'publicKey',
+            message: "Field 'publicKey' is required."
+        });
+    } else if (!isValidEd25519PublicKey(publicKey)) {
+        errors.push({
+            field: 'publicKey',
+            message: "Invalid 'publicKey'. Expected a 32-byte Ed25519 public key as a 64-character hexadecimal or base64 string."
+        });
+    }
+
+    if (!signature || typeof signature !== 'string' || signature.trim().length === 0) {
+        errors.push({
+            field: 'signature',
+            message: "Field 'signature' is required."
+        });
+    } else if (!isValidEd25519Signature(signature)) {
+        errors.push({
+            field: 'signature',
+            message: "Invalid 'signature'. Expected a 64-byte Ed25519 signature as a 128-character hexadecimal or base64 string."
+        });
+    }
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        errors.push({
+            field: 'message',
+            message: "Field 'message' is required (non-empty challenge string)."
+        });
+    } else if (message.length > 1000) {
+        errors.push({
+            field: 'message',
+            message: "Field 'message' exceeds maximum allowed length of 1000 characters."
+        });
+    }
+
+    if (errors.length > 0) {
+        return sendValidationError(res, errors);
+    }
+
+    next();
+}
+
+

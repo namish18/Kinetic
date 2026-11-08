@@ -2,8 +2,20 @@ import express from 'express';
 import passport from 'passport';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
-import { getFromIPFS, authenticateDID } from '../services/didService.js';
-import { validateGithubUsernameParam, validateFlowWallet } from '../middleware/validate.js';
+import {
+    getFromIPFS,
+    uploadToIPFS,
+    buildDIDFromPublicKey,
+    verifyContributorSignature,
+    buildIdentityDocument,
+    authenticateDID,
+    didKeyToPublicKey
+} from '../services/didService.js';
+import {
+    validateGithubUsernameParam,
+    validateFlowWallet,
+    validateRegisterDID
+} from '../middleware/validate.js';
 
 const router = express.Router();
 
@@ -87,8 +99,76 @@ router.get('/me', authenticateToken, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-//  DID Resolution
+//  DID Registration & Resolution (Contributor-Controlled DID-01)
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/auth/register-did
+ * Register a contributor-controlled DID (JWT required).
+ * Contributor provides their self-generated public key and cryptographic proof of possession.
+ * The server never derives, generates, or controls the contributor's private key.
+ */
+router.post('/register-did', authenticateToken, validateRegisterDID, async (req, res) => {
+    try {
+        const { publicKey, signature, message } = req.body;
+        const user = await User.findById(req.user.id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        // Verify cryptographic proof of possession (contributor possesses the private key)
+        const isValid = verifyContributorSignature({ publicKey, signature, message });
+        if (!isValid) {
+            return res.status(400).json({
+                success: false,
+                error: 'Cryptographic proof of possession failed. Signature is invalid for the provided public key and challenge.'
+            });
+        }
+
+        // Build W3C did:key and DID document directly from contributor public key (no server private key)
+        const { didString, didDocument } = buildDIDFromPublicKey(publicKey);
+
+        // Build enriched identity document with GitHub metadata
+        const identityDoc = buildIdentityDocument(user, didString, didDocument, user.wallet);
+
+        // Upload identity document to IPFS via Helia
+        const ipfsCID = await uploadToIPFS(identityDoc);
+
+        // Update MongoDB record
+        user.did = didString;
+        user.ipfsCID = ipfsCID;
+        user.didDocument = identityDoc;
+        await user.save();
+
+        const token = jwt.sign(
+            { id: user._id, github: user.github, did: user.did, role: user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.status(200).json({
+            success: true,
+            message: 'Contributor identity registered successfully under contributor control',
+            did: didString,
+            ipfsCID,
+            didDocument: identityDoc,
+            token,
+            record: {
+                github: user.github,
+                did: user.did,
+                ipfsCID: user.ipfsCID,
+                wallet: user.wallet,
+            }
+        });
+    } catch (error) {
+        if (error.code === 11000) {
+            return res.status(409).json({
+                success: false,
+                error: 'This DID is already registered to another account.'
+            });
+        }
+        console.error('Error registering contributor DID:', error);
+        res.status(500).json({ error: 'Server error during DID registration' });
+    }
+});
 
 /**
  * GET /api/auth/did/:username
@@ -98,7 +178,7 @@ router.get('/me', authenticateToken, async (req, res) => {
 router.get('/did/:username', validateGithubUsernameParam('username'), async (req, res) => {
     try {
         const user = await User.findOne({ github: req.params.username });
-        if (!user) {
+        if (!user || !user.did) {
             return res.status(404).json({ error: `No DID found for @${req.params.username}` });
         }
 
@@ -132,21 +212,33 @@ router.get('/did/:username', validateGithubUsernameParam('username'), async (req
 
 /**
  * GET /api/auth/did-resolve/self
- * Re-derive and return your own DID document live from the key-did-resolver.
- * Useful for verifying the DID is still cryptographically valid.
+ * Re-derive and return your own DID document live from the contributor-controlled public key.
+ * Does not derive or touch any server private keys (DID-01).
  */
 router.get('/did-resolve/self', authenticateToken, async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
 
-        // Re-run key-did-resolver against the user's did:key
-        const { didString, didDocument } = await authenticateDID(user.githubId);
+        if (!user.did) {
+            return res.status(404).json({
+                error: 'No contributor DID registered yet. Please register your client-generated key via POST /api/auth/register-did.'
+            });
+        }
+
+        // Re-resolve DID document live from contributor's public key without private key derivation
+        const publicKey = didKeyToPublicKey(user.did);
+        const { didString, didDocument } = authenticateDID(publicKey);
+
+        let liveDocument = null;
+        if (user.ipfsCID && !user.ipfsCID.startsWith('sha256-')) {
+            liveDocument = await getFromIPFS(user.ipfsCID);
+        }
 
         res.json({
             success: true,
             did: didString,
-            didDocument,
+            didDocument: liveDocument || didDocument || user.didDocument,
             mongoRecord: {
                 github: user.github,
                 did: user.did,

@@ -1,8 +1,9 @@
 /**
  * DID Service — Protocol Labs Stack
+ * Contributor-Controlled Identity (DID-01)
  *
  * DID generation  (did:key — W3C / DIF standard):
- *   ├── tweetnacl              Ed25519 keypair from deterministic seed
+ *   ├── tweetnacl              Ed25519 detached signature verification
  *   └── multiformats/bases     base58btc multibase encoding (same as Ceramic)
  *
  * IPFS storage (Protocol Labs):
@@ -11,8 +12,10 @@
  *   ├── blockstore-fs          persistent on-disk block storage
  *   └── datastore-fs           persistent on-disk datastore
  *
- * Zero API keys. Zero accounts. Generates the exact same did:key format
- * as key-did-provider-ed25519 would produce.
+ * Zero server-derived private keys. Contributor private keys are generated
+ * and retained exclusively under contributor control (DID-01). The server
+ * only receives the contributor's public key and verifies cryptographic
+ * proof of possession (signature).
  */
 
 import * as crypto from 'node:crypto';
@@ -49,22 +52,50 @@ async function getHelia() {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  DID key generation  (did:key Ed25519)
+//  Encoding & Type Helpers
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Deterministically derive a 32-byte Ed25519 seed from a GitHub user ID.
- * HMAC-SHA256(githubId,  DID_SEED_SECRET)  →  same DID across restarts.
+ * Normalizes a hex string, base64 string, or Uint8Array/Buffer to Uint8Array.
  *
- * ⚠️  Never change DID_SEED_SECRET after users have been created — their
- *     DIDs will change and old references will break.
+ * @param {any} input
+ * @param {number|null} [expectedLength=null]
+ * @param {string} [fieldName='key']
+ * @returns {Uint8Array}
  */
-function deriveSeed(githubId) {
-    const secret = process.env.DID_SEED_SECRET || 'kinetic-did-seed-secret-changeme';
-    return new Uint8Array(
-        crypto.createHmac('sha256', secret).update(String(githubId)).digest()
-    );
+function normalizeToUint8Array(input, expectedLength = null, fieldName = 'key') {
+    if (!input) {
+        throw new Error(`${fieldName} is required`);
+    }
+    let uint8;
+    if (input instanceof Uint8Array || Buffer.isBuffer(input)) {
+        uint8 = new Uint8Array(input);
+    } else if (typeof input === 'string') {
+        const trimmed = input.trim();
+        // Check if hex
+        if (/^(0x)?[0-9a-fA-F]+$/.test(trimmed) && (trimmed.length === 64 || trimmed.length === 66 || trimmed.length === 128 || trimmed.length === 130)) {
+            const cleanHex = trimmed.replace(/^0x/, '');
+            uint8 = new Uint8Array(Buffer.from(cleanHex, 'hex'));
+        } else if (/^[A-Za-z0-9+/=]+$/.test(trimmed)) {
+            // Base64
+            uint8 = new Uint8Array(Buffer.from(trimmed, 'base64'));
+        } else {
+            throw new Error(`Invalid encoding for ${fieldName}`);
+        }
+    } else {
+        throw new Error(`Unsupported format for ${fieldName}`);
+    }
+
+    if (expectedLength && uint8.length !== expectedLength) {
+        throw new Error(`Expected ${fieldName} to be ${expectedLength} bytes, got ${uint8.length} bytes`);
+    }
+
+    return uint8;
 }
+
+// ─────────────────────────────────────────────────────────────
+//  DID key utilities  (did:key Ed25519)
+// ─────────────────────────────────────────────────────────────
 
 /**
  * Build a did:key string from an Ed25519 public key.
@@ -72,14 +103,35 @@ function deriveSeed(githubId) {
  * Format (per did:key spec):
  *   did:key:z  <base58btc( 0xed 0x01 || publicKey )>
  *              └─ multicodec varint for ed25519-pub ─┘
- *
- * This is identical to what key-did-provider-ed25519 produces internally.
  */
 function publicKeyToDidKey(publicKey) {
+    const rawPublicKey = normalizeToUint8Array(publicKey, 32, 'publicKey');
     // Multicodec prefix for ed25519-pub: 0xed 0x01  (varint encoding)
-    const multicodecPrefixed = new Uint8Array([0xed, 0x01, ...publicKey]);
+    const multicodecPrefixed = new Uint8Array([0xed, 0x01, ...rawPublicKey]);
     const encoded = base58btc.encode(multicodecPrefixed); // starts with 'z'
     return `did:key:${encoded}`;
+}
+
+/**
+ * Extract the raw 32-byte Ed25519 public key from a did:key string.
+ *
+ * @param {string} didKey
+ * @returns {Uint8Array} 32-byte public key
+ */
+function didKeyToPublicKey(didKey) {
+    if (!didKey || typeof didKey !== 'string' || !didKey.startsWith('did:key:')) {
+        throw new Error("Invalid did:key format. Must start with 'did:key:'");
+    }
+    const multibase = didKey.slice('did:key:'.length);
+    const decoded = base58btc.decode(multibase);
+    // Check multicodec prefix for ed25519-pub: 0xed 0x01
+    if (decoded[0] !== 0xed || decoded[1] !== 0x01) {
+        throw new Error("Invalid did:key multicodec prefix. Expected Ed25519 (0xed 0x01)");
+    }
+    if (decoded.length !== 34) {
+        throw new Error(`Invalid decoded did:key length: expected 34 bytes (2 prefix + 32 key), got ${decoded.length}`);
+    }
+    return decoded.slice(2);
 }
 
 /**
@@ -87,6 +139,7 @@ function publicKeyToDidKey(publicKey) {
  * Structure mirrors what key-did-resolver returns.
  */
 function buildDIDDocument(did, publicKey) {
+    const rawPublicKey = normalizeToUint8Array(publicKey, 32, 'publicKey');
     const vmId = `${did}#${did.substring('did:key:'.length)}`;
     return {
         '@context': ['https://www.w3.org/ns/did/v1'],
@@ -96,7 +149,7 @@ function buildDIDDocument(did, publicKey) {
                 id: vmId,
                 type: 'Ed25519VerificationKey2018',
                 controller: did,
-                publicKeyBase58: base58btc.encode(publicKey).slice(1), // strip 'z' prefix
+                publicKeyBase58: base58btc.encode(rawPublicKey).slice(1), // strip 'z' prefix
             },
         ],
         authentication: [vmId],
@@ -107,17 +160,81 @@ function buildDIDDocument(did, publicKey) {
 }
 
 /**
- * Generate a cryptographic did:key for a GitHub user.
+ * Build did:key string and W3C DID document from a contributor-generated public key.
+ * Does not generate, derive, or access any private key.
  *
- * @param {string|number} githubId
- * @returns {{ didString: string, didDocument: Object }}
+ * @param {Uint8Array|string} publicKey
+ * @returns {{ didString: string, didDocument: Object, rawPublicKey: Uint8Array }}
  */
-function authenticateDID(githubId) {
-    const seed = deriveSeed(githubId);
-    const keyPair = nacl.sign.keyPair.fromSeed(seed);  // sync, deterministic
-    const didString = publicKeyToDidKey(keyPair.publicKey);
-    const didDocument = buildDIDDocument(didString, keyPair.publicKey);
-    return { didString, didDocument };
+function buildDIDFromPublicKey(publicKey) {
+    const rawPublicKey = normalizeToUint8Array(publicKey, 32, 'publicKey');
+    const didString = publicKeyToDidKey(rawPublicKey);
+    const didDocument = buildDIDDocument(didString, rawPublicKey);
+    return { didString, didDocument, rawPublicKey };
+}
+
+/**
+ * Verify cryptographic proof of possession for contributor-controlled identity.
+ * Confirms that the contributor possesses the private key corresponding to publicKey.
+ *
+ * @param {object} params
+ * @param {Uint8Array|string} params.publicKey - 32-byte Ed25519 public key
+ * @param {Uint8Array|string} params.signature - 64-byte Ed25519 detached signature
+ * @param {Uint8Array|string} params.message - The challenge message signed
+ * @returns {boolean} True if signature is cryptographically valid
+ */
+function verifyContributorSignature({ publicKey, signature, message }) {
+    try {
+        const pubKeyBytes = normalizeToUint8Array(publicKey, 32, 'publicKey');
+        const sigBytes = normalizeToUint8Array(signature, 64, 'signature');
+
+        let msgBytes;
+        if (typeof message === 'string') {
+            msgBytes = new TextEncoder().encode(message);
+        } else if (message instanceof Uint8Array || Buffer.isBuffer(message)) {
+            msgBytes = new Uint8Array(message);
+        } else {
+            return false;
+        }
+
+        return nacl.sign.detached.verify(msgBytes, sigBytes, pubKeyBytes);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Authenticates and builds a W3C DID document from contributor-controlled key material.
+ * Replaces legacy server-derived key generation (DID-01).
+ *
+ * @param {Uint8Array|string|object} contributorInput - Contributor public key (Uint8Array, Buffer, or hex string),
+ *                                                     or an object { publicKey, signature, message } for proof of possession.
+ * @returns {{ didString: string, didDocument: Object, rawPublicKey: Uint8Array }}
+ */
+function authenticateDID(contributorInput) {
+    if (!contributorInput) {
+        throw new Error('Contributor public key is required. Server-derived key generation has been removed under DID-01.');
+    }
+
+    // Explicitly reject legacy numeric githubId attempts to prevent server-side derivation
+    if (typeof contributorInput === 'number' || (/^\d+$/.test(String(contributorInput).trim()) && String(contributorInput).trim().length < 32)) {
+        throw new Error('Server-derived private key generation from GitHub ID has been removed (DID-01). Contributor keys must be generated under contributor control.');
+    }
+
+    // If passed proof object { publicKey, signature, message }
+    if (typeof contributorInput === 'object' && !Buffer.isBuffer(contributorInput) && !(contributorInput instanceof Uint8Array) && contributorInput.publicKey) {
+        const { publicKey, signature, message } = contributorInput;
+        if (signature && message) {
+            const isValid = verifyContributorSignature({ publicKey, signature, message });
+            if (!isValid) {
+                throw new Error('Contributor cryptographic proof of possession failed');
+            }
+        }
+        return buildDIDFromPublicKey(publicKey);
+    }
+
+    // Direct contributor public key input
+    return buildDIDFromPublicKey(contributorInput);
 }
 
 /**
@@ -125,7 +242,8 @@ function authenticateDID(githubId) {
  * Merges W3C DID document fields with GitHub profile metadata.
  */
 function buildIdentityDocument(githubProfile, didString, didDocument, wallet = null) {
-    const githubUsername = githubProfile.username || githubProfile.login;
+    const githubUsername = githubProfile.username || githubProfile.login || githubProfile.github;
+    const githubId = String(githubProfile.id || githubProfile.githubId);
     return {
         ...didDocument,              // W3C fields: id, verificationMethod, …
         '@context': [
@@ -134,9 +252,9 @@ function buildIdentityDocument(githubProfile, didString, didDocument, wallet = n
         ],
         // Kinetic metadata
         github: githubUsername,
-        githubId: String(githubProfile.id),
+        githubId,
         displayName: githubProfile.displayName || githubUsername,
-        avatarUrl: githubProfile.photos?.[0]?.value || null,
+        avatarUrl: githubProfile.photos?.[0]?.value || githubProfile.avatarUrl || null,
         wallet,
         createdAt: new Date().toISOString().split('T')[0],
     };
@@ -217,9 +335,14 @@ async function stopHelia() {
 }
 
 export {
-    authenticateDID,
+    publicKeyToDidKey,
+    didKeyToPublicKey,
+    buildDIDDocument,
+    buildDIDFromPublicKey,
+    verifyContributorSignature,
     buildIdentityDocument,
     uploadToIPFS,
     getFromIPFS,
     stopHelia,
+    authenticateDID,
 };
