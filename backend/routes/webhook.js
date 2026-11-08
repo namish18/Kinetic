@@ -1,6 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
-import { extractPRMetrics, calculatePRScore } from '../services/contributionService.js';
+import { extractPRMetrics, calculatePRScore, getContributorReputation } from '../services/contributionService.js';
 import { proposePayout } from '../services/flowService.js';
 import { verifyWebhookSignature } from '../middleware/verifyWebhookSignature.js';
 
@@ -50,6 +50,63 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
         return res.status(200).send('Merged to untracked branch');
       }
 
+            // Calculate payout based on true PR dimensions
+            const prMetrics = extractPRMetrics(payload.pull_request);
+            
+            // Retrieve contributor reputation from DB or compute from historical evidence (MSTS-03)
+            const contributorUser = await User.findOne({ github: contributorUsername });
+            let contributorReputation = 0;
+
+            if (contributorUser && typeof contributorUser.reputation === 'number' && contributorUser.reputation > 0) {
+                contributorReputation = contributorUser.reputation;
+            } else {
+                const repResult = await getContributorReputation(
+                    contributorUsername, 
+                    process.env.GITHUB_PAT, 
+                    repoConfig.reputationWeights
+                );
+                contributorReputation = repResult.reputation;
+
+                if (contributorUser) {
+                    contributorUser.reputation = contributorReputation;
+                    contributorUser.reputationEvidence = repResult.evidence;
+                    await contributorUser.save().catch(e => console.warn('Webhook user reputation save failed:', e.message));
+                }
+            }
+
+            // Execute the explicit algorithm from contribution_algo.md with historical reputation
+            const result = calculatePRScore(prMetrics, repoConfig.weights, { 
+                reputation: contributorReputation
+            });
+
+            // result.score is in [0, ~1.5] range; map to 0-100 display score
+            const finalScore = result.score ? Math.round(result.score * 100) : 0;
+            
+            // Payout: 1 point = 0.1 FLOW (max ~15 FLOW per PR, capped at 10 FLOW)
+            const FLOW_PER_POINT = 0.1;
+            const MAX_FLOW_PER_PR = 10.0;
+            const estPayoutFlow = Math.min(MAX_FLOW_PER_PR, Math.round(result.score * FLOW_PER_POINT * 1000) / 1000);
+            
+            console.log(`Webhook: Payout calculated for ${contributorUsername} -> Score: ${finalScore}, Reputation: ${contributorReputation}, Est payout: ${estPayoutFlow} FLOW\n`);
+
+            let flowTxStatus = "skipped";
+            let flowTxId = null;
+            
+            if (estPayoutFlow > 0 && contributorUser?.wallet) {
+                console.log(`Webhook: Proposing smart contract payout to contributor's wallet ${contributorUser.wallet}...`);
+                const txResult = await proposePayout(contributorUser.wallet, estPayoutFlow);
+                
+                if (txResult.success) {
+                    flowTxStatus = "success";
+                    flowTxId = txResult.transactionId;
+                    console.log(`Webhook: Successfully proposed transaction (ID: ${flowTxId})`);
+                } else {
+                    flowTxStatus = "failed";
+                    console.log(`Webhook: Failed to execute Flow transaction:`, txResult.error);
+                }
+            } else {
+                console.log(`Webhook: Skipped execution (Tokens <= 0 or Contributor wallet not linked).`);
+            }
       console.log(`Webhook: Target branch matched! Calculating payout algorithm using org weights...`);
 
       // Calculate payout based on true PR dimensions
