@@ -177,3 +177,123 @@ export async function fetchPRDetails(prUrls, headers, options = {}) {
 
     return { prs, ...state };
 }
+
+/**
+ * Fetches review records (GET /repos/:o/:r/pulls/:n/reviews) for a single PR URL.
+ */
+export async function fetchPRReviews(prUrl, headers) {
+    const res = await fetch(`${prUrl}/reviews`, { headers });
+    if (!res.ok) {
+        return {
+            ok: false,
+            status: res.status,
+            rateLimited: isRateLimited(res),
+            resetAt: rateLimitResetAt(res),
+            error: await githubErrorMessage(res),
+            data: []
+        };
+    }
+    const data = await res.json();
+    return { ok: true, data: Array.isArray(data) ? data : [], rateLimited: false, error: null };
+}
+
+/**
+ * Fetches inline review comments (GET /repos/:o/:r/pulls/:n/comments) for a single PR URL.
+ */
+export async function fetchPRReviewComments(prUrl, headers) {
+    const res = await fetch(`${prUrl}/comments`, { headers });
+    if (!res.ok) {
+        return {
+            ok: false,
+            status: res.status,
+            rateLimited: isRateLimited(res),
+            resetAt: rateLimitResetAt(res),
+            error: await githubErrorMessage(res),
+            data: []
+        };
+    }
+    const data = await res.json();
+    return { ok: true, data: Array.isArray(data) ? data : [], rateLimited: false, error: null };
+}
+
+/**
+ * Fetches both reviews and review comments for a single PR URL.
+ */
+export async function fetchPRReviewData(prUrl, headers) {
+    const reviewsRes = await fetchPRReviews(prUrl, headers);
+    if (reviewsRes.rateLimited) {
+        return { reviews: [], comments: [], rateLimited: true, resetAt: reviewsRes.resetAt, error: reviewsRes.error };
+    }
+    const commentsRes = await fetchPRReviewComments(prUrl, headers);
+    if (commentsRes.rateLimited) {
+        return { reviews: reviewsRes.data, comments: [], rateLimited: true, resetAt: commentsRes.resetAt, error: commentsRes.error };
+    }
+    return {
+        reviews: reviewsRes.data,
+        comments: commentsRes.data,
+        rateLimited: false,
+        resetAt: null,
+        error: reviewsRes.error || commentsRes.error || null
+    };
+}
+
+/**
+ * Fetches review data (reviews and comments) for multiple PR URLs with limited concurrency.
+ */
+export async function fetchPRReviewsBatch(prUrls, headers, options = {}) {
+    const concurrency = options.concurrency || 4;
+    const state = { requests: 0, errors: 0, rateLimited: false, resetAt: null };
+
+    const results = await mapWithConcurrency(prUrls, concurrency, async (url) => {
+        if (state.rateLimited) return null;
+
+        let reviews = [];
+        let comments = [];
+
+        // 1. Fetch reviews
+        state.requests++;
+        try {
+            const res = await fetch(`${url}/reviews`, { headers });
+            if (!res.ok) {
+                if (isRateLimited(res)) {
+                    state.rateLimited = true;
+                    state.resetAt = rateLimitResetAt(res);
+                    return null;
+                }
+                state.errors++;
+            } else {
+                const data = await res.json();
+                if (Array.isArray(data)) reviews = data;
+            }
+        } catch {
+            state.errors++;
+        }
+
+        if (state.rateLimited) return null;
+
+        // 2. Fetch comments if not disabled
+        if (options.fetchComments !== false) {
+            state.requests++;
+            try {
+                const res = await fetch(`${url}/comments`, { headers });
+                if (!res.ok) {
+                    if (isRateLimited(res)) {
+                        state.rateLimited = true;
+                        state.resetAt = rateLimitResetAt(res);
+                        return null;
+                    }
+                    state.errors++;
+                } else {
+                    const data = await res.json();
+                    if (Array.isArray(data)) comments = data;
+                }
+            } catch {
+                state.errors++;
+            }
+        }
+
+        return { reviews, comments };
+    });
+
+    return { results, ...state };
+}

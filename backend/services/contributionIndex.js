@@ -16,7 +16,8 @@
 
 import ContributionEvent from '../models/ContributionEvent.js';
 import ContributionSyncState from '../models/ContributionSyncState.js';
-import { fetchAllSearchResults, fetchPRDetails } from './githubSearch.js';
+import { fetchAllSearchResults, fetchPRDetails, fetchPRReviewsBatch } from './githubSearch.js';
+import { normalizeReviews } from './reviewAttribution.js';
 
 // Re-fetch details for PRs merged this recently, so review comments added
 // shortly after merge are still counted.
@@ -74,8 +75,8 @@ export function eventFromSearchItem(item, now = new Date()) {
 /**
  * Index fields taken from a full PR object (GET /repos/:o/:r/pulls/:n).
  */
-export function detailsFromPR(pr, now = new Date()) {
-    return {
+export function detailsFromPR(pr, now = new Date(), reviewData = null) {
+    const details = {
         ...(pr.base?.repo?.full_name && { repo: pr.base.repo.full_name }),
         mergeCommitSha: pr.merge_commit_sha || null,
         headSha: pr.head?.sha || null,
@@ -90,6 +91,34 @@ export function detailsFromPR(pr, now = new Date()) {
             labels: (pr.labels || []).map(l => l.name)
         },
         detailsFetchedAt: now
+    };
+
+    if (reviewData) {
+        const reviewsObj = reviewsFromPR(reviewData, now);
+        if (reviewsObj) {
+            Object.assign(details, reviewsObj);
+        }
+    }
+
+    return details;
+}
+
+/**
+ * Normalizes PR review records and returns fields to update on ContributionEvent.
+ */
+export function reviewsFromPR(reviewData, now = new Date()) {
+    if (!reviewData) return null;
+    const normalized = normalizeReviews(
+        reviewData.reviews || [],
+        reviewData.comments || [],
+        reviewData.existingReviews || []
+    );
+    return {
+        reviews: normalized.reviews,
+        reviewers: normalized.reviewers,
+        substantiveReviewers: normalized.substantiveReviewers,
+        reviewSummary: normalized.reviewSummary,
+        reviewsFetchedAt: now
     };
 }
 
@@ -111,7 +140,11 @@ export function toPRShape(event) {
         comments: s.comments,
         review_comments: s.reviewComments,
         merged: s.merged,
-        labels: (s.labels || []).map(name => ({ name }))
+        labels: (s.labels || []).map(name => ({ name })),
+        reviews: event.reviews || [],
+        reviewers: event.reviewers || [],
+        substantiveReviewers: event.substantiveReviewers || [],
+        reviewSummary: event.reviewSummary || null
     };
 }
 
@@ -213,13 +246,16 @@ export async function syncIndex({
     headers,
     Event = ContributionEvent,
     SyncState = ContributionSyncState,
-    now = new Date()
+    now = new Date(),
+    fetchReviews = false
 }) {
     const meta = {
         githubRequests: 0,
         searchRequests: 0,
         detailRequests: 0,
         detailErrors: 0,
+        reviewRequests: 0,
+        reviewErrors: 0,
         newEvents: 0,
         alreadyIndexed: 0,
         truncated: false,
@@ -290,7 +326,7 @@ export async function syncIndex({
     if (meta.errors.length === 0) {
         const indexed = await Event
             .find({ ...detailFilter, repoKey: { $in: [...registeredKeys] } })
-            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt')
+            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt reviewsFetchedAt reviews')
             .lean();
         const targets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
 
@@ -302,21 +338,54 @@ export async function syncIndex({
             meta.rateLimitResetAt = details.resetAt;
         }
 
+        let reviewBatch = { results: [], requests: 0, errors: 0 };
+        if (fetchReviews && !meta.rateLimited && targets.length > 0) {
+            reviewBatch = await fetchPRReviewsBatch(targets.map(e => e.apiUrl), headers);
+            meta.reviewRequests = reviewBatch.requests;
+            meta.reviewErrors = reviewBatch.errors;
+            if (reviewBatch.rateLimited) {
+                meta.rateLimited = true;
+                meta.rateLimitResetAt = reviewBatch.resetAt;
+            }
+        }
+
         const updates = [];
-        details.prs.forEach((pr, i) => {
-            if (!pr) return;
-            updates.push({
-                updateOne: {
-                    filter: { repoKey: targets[i].repoKey, prNumber: targets[i].prNumber },
-                    update: { $set: detailsFromPR(pr, now) }
+        targets.forEach((target, i) => {
+            const pr = details.prs ? details.prs[i] : null;
+            const rData = reviewBatch.results ? reviewBatch.results[i] : null;
+            if (!pr && !rData) return;
+
+            const updateFields = {};
+            if (pr) {
+                Object.assign(updateFields, detailsFromPR(pr, now));
+            }
+            if (rData) {
+                const reviewsObj = reviewsFromPR({
+                    reviews: rData.reviews,
+                    comments: rData.comments,
+                    existingReviews: target.reviews || []
+                }, now);
+                if (reviewsObj) {
+                    Object.assign(updateFields, reviewsObj);
                 }
-            });
+            }
+
+            if (Object.keys(updateFields).length > 0) {
+                updates.push({
+                    updateOne: {
+                        filter: { repoKey: target.repoKey, prNumber: target.prNumber },
+                        update: { $set: updateFields }
+                    }
+                });
+            }
         });
         if (updates.length > 0) await Event.bulkWrite(updates, { ordered: false });
     }
 
-    meta.githubRequests = meta.searchRequests + meta.detailRequests;
+    meta.reviewRequests = meta.reviewRequests || 0;
+    meta.reviewErrors = meta.reviewErrors || 0;
+    meta.githubRequests = meta.searchRequests + meta.detailRequests + meta.reviewRequests;
     meta.stale = meta.errors.length > 0 || meta.rateLimited;
-    meta.partial = meta.stale || meta.incomplete || meta.detailErrors > 0;
+    meta.partial = meta.stale || meta.incomplete || meta.detailErrors > 0 || meta.reviewErrors > 0;
     return meta;
 }
