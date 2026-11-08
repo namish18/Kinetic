@@ -7,7 +7,7 @@
 
 import User from '../models/User.js';
 import ContributionEvent from '../models/ContributionEvent.js';
-import { syncIndex, toPRShape } from './contributionIndex.js';
+import { syncIndex, toPRShape, attributionFromEvent } from './contributionIndex.js';
 
 /**
  * Sync details reported in a score response's meta.
@@ -392,6 +392,7 @@ export async function computeContributionScore(username, token, options = {}) {
             const metrics = extractPRMetrics(prData);
             validPRRecords.push({
                 prData,
+                attribution: attributionFromEvent(event),
                 repoFullName,
                 repoConfig,
                 weights,
@@ -480,7 +481,8 @@ export async function computeContributionScore(username, token, options = {}) {
                 algorithmVersion: ALGORITHM_VERSION,
                 status: 'merged',
                 date: record.prData.merged_at?.split('T')[0] || 'N/A',
-                link: record.prData.html_url
+                link: record.prData.html_url,
+                ...record.attribution
             });
         }
 
@@ -571,7 +573,7 @@ export async function computeOrgContributors(orgId, token) {
                     prs: []
                 };
             }
-            contributorPRMap[username].prs.push({ prData, repoFullName, repoConfig, metrics });
+            contributorPRMap[username].prs.push({ prData, attribution: attributionFromEvent(event), repoFullName, repoConfig, metrics });
         }
 
         // 2. Score each contributor using their historical reputation evidence
@@ -621,7 +623,8 @@ export async function computeOrgContributors(orgId, token) {
                     repo: prItem.repoFullName,
                     score: Math.round(prScore * 10) / 10,
                     timestamp: prItem.prData.merged_at,
-                    cid: `bafybei${Math.random().toString(16).substring(2, 10)}`
+                    cid: `bafybei${Math.random().toString(16).substring(2, 10)}`,
+                    ...prItem.attribution
                 });
             }
         }
