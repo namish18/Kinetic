@@ -66,11 +66,7 @@ app.use('/api/webhook', webhookRoutes);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Kinetic Backend is healthy' });
-// ─── Static frontend ─────────────────────────────────────────
-app.use(express.static(path.join(__dirname, '..', 'frontend')));
-
-// ─── Health / Info ───────────────────────────────────────────
-app.get('/health', (_req, res) => res.send('OK'));
+});
 
 app.get('/api', (_req, res) => {
     res.json({
@@ -82,7 +78,8 @@ app.get('/api', (_req, res) => {
         },
         endpoints: {
             'GET /api/auth/github': 'Begin GitHub OAuth flow',
-            'GET /api/auth/github/callback': 'OAuth callback (creates DID on first login)',
+            'GET /api/auth/github/callback': 'OAuth callback',
+            'POST /api/auth/register-did': 'Register contributor-controlled DID with proof of possession',
             'GET /api/auth/me': 'Current user profile (JWT required)',
             'GET /api/auth/did/:username': 'Resolve DID by GitHub username (public)',
             'GET /api/auth/did-resolve/self': 'Re-resolve your DID live (JWT required)',
@@ -101,6 +98,13 @@ if (process.env.NODE_ENV !== 'test') {
   });
 }
 
-export default app;
+// ─── Graceful shutdown ───────────────────────────────────────
+async function shutdown(signal) {
+    console.log(`\n${signal} received — shutting down gracefully...`);
+    await stopHelia();
+    process.exit(0);
+}
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+
+export default app;
