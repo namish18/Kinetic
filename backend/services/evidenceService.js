@@ -252,3 +252,29 @@ export async function ensureContributionEvidence({ contribution, scoreInputs, sc
         return null;
     }
 }
+
+/**
+ * Looks up the stored evidence CIDs for a list of contributions, in one query.
+ * Returns a Map keyed by evidenceKey(); a contribution only appears in it when
+ * it has a valid CID. Anything else (not scored yet, no package, invalid value,
+ * database error) is simply absent, so callers show "no CID" and never a made up one.
+ * Never throws.
+ */
+export const evidenceKey = ({ username, repository, prNumber }) => `${username}|${repository}|${prNumber}`;
+
+export async function getEvidenceCIDs(contributions, { model = ContributionScore, logger = console } = {}) {
+    const found = new Map();
+    if (!Array.isArray(contributions) || contributions.length === 0) return found;
+    try {
+        const records = await model
+            .find({ $or: contributions.map(({ username, repository, prNumber }) => ({ username, repository, prNumber })) })
+            .select('username repository prNumber evidenceCID')
+            .lean();
+        for (const record of records) {
+            if (isValidCid(record.evidenceCID)) found.set(evidenceKey(record), record.evidenceCID);
+        }
+    } catch (err) {
+        logger.warn(`Evidence CID lookup failed: ${err.message}`);
+    }
+    return found;
+}
