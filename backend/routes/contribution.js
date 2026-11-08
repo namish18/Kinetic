@@ -9,6 +9,10 @@ import jwt from 'jsonwebtoken';
 import {
     computeContributionScore
 } from '../services/contributionService.js';
+import {
+    validateGithubUsernameParam,
+    validateCompareUsers
+} from '../middleware/validate.js';
 
 const router = express.Router();
 
@@ -33,7 +37,7 @@ function authenticateToken(req, res, next) {
  * GET /api/contribution/score/:username
  * Compute the full Contribution score for any GitHub user (public endpoint).
  */
-router.get('/score/:username', async (req, res) => {
+router.get('/score/:username', validateGithubUsernameParam('username'), async (req, res) => {
     try {
         const { username } = req.params;
         const githubToken = req.query.token || process.env.GITHUB_PAT || null;
@@ -71,14 +75,9 @@ router.get('/me', authenticateToken, async (req, res) => {
  * GET /api/contribution/compare?users=user1,user2,user3
  * Compare Contribution scores across multiple users (max 5).
  */
-router.get('/compare', async (req, res) => {
+router.get('/compare', validateCompareUsers, async (req, res) => {
     try {
-        const usersParam = req.query.users;
-        if (!usersParam) {
-            return res.status(400).json({ error: 'users query param required (comma-separated)' });
-        }
-
-        const usernames = usersParam.split(',').map(u => u.trim()).filter(Boolean).slice(0, 5);
+        const usernames = req.validatedUsers;
         const token = req.query.token || process.env.GITHUB_PAT || null;
 
         console.log(`\n📊 Comparing Scores for: ${usernames.join(', ')}`);
