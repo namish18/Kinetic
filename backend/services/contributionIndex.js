@@ -160,6 +160,20 @@ export function needsDetails(event, registeredKeys, now = new Date()) {
     return recentlyMerged && detailsOld;
 }
 
+/**
+ * True when an event in a registered repo has no reviews fetched yet, or was merged
+ * within the refresh window and its reviews are older than the minimum age.
+ * Evaluated independently from needsDetails so historical PRs with fresh details
+ * still receive review attribution.
+ */
+export function needsReviews(event, registeredKeys, now = new Date()) {
+    if (!registeredKeys.has(event.repoKey)) return false;
+    if (!event.reviewsFetchedAt) return true;
+    const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
+    const reviewsOld = new Date(event.reviewsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
+    return recentlyMerged && reviewsOld;
+}
+
 function duplicateKeyOnly(error) {
     const writeErrors = [].concat(error?.writeErrors || []);
     if (writeErrors.length > 0) return writeErrors.every(e => (e.code ?? e.err?.code) === 11000);
@@ -328,57 +342,82 @@ export async function syncIndex({
             .find({ ...detailFilter, repoKey: { $in: [...registeredKeys] } })
             .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt reviewsFetchedAt reviews')
             .lean();
-        const targets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
 
-        const details = await fetchPRDetails(targets.map(e => e.apiUrl), headers);
-        meta.detailRequests = details.requests;
-        meta.detailErrors = details.errors;
-        if (details.rateLimited) {
-            meta.rateLimited = true;
-            meta.rateLimitResetAt = details.resetAt;
+        // Independent selection for details and reviews so historical PRs whose
+        // details are already cached still receive review attribution.
+        const detailTargets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
+        const reviewTargets = fetchReviews
+            ? indexed.filter(e => e.apiUrl && needsReviews(e, registeredKeys, now))
+            : [];
+
+        const updatesMap = new Map();
+        function getOrCreateUpdate(target) {
+            const key = `${target.repoKey}#${target.prNumber}`;
+            if (!updatesMap.has(key)) {
+                updatesMap.set(key, {
+                    filter: { repoKey: target.repoKey, prNumber: target.prNumber },
+                    set: {}
+                });
+            }
+            return updatesMap.get(key);
         }
 
-        let reviewBatch = { results: [], requests: 0, errors: 0 };
-        if (fetchReviews && !meta.rateLimited && targets.length > 0) {
-            reviewBatch = await fetchPRReviewsBatch(targets.map(e => e.apiUrl), headers);
+        if (detailTargets.length > 0) {
+            const details = await fetchPRDetails(detailTargets.map(e => e.apiUrl), headers);
+            meta.detailRequests = details.requests;
+            meta.detailErrors = details.errors;
+            if (details.rateLimited) {
+                meta.rateLimited = true;
+                meta.rateLimitResetAt = details.resetAt;
+            }
+
+            details.prs.forEach((pr, i) => {
+                if (!pr) return;
+                const update = getOrCreateUpdate(detailTargets[i]);
+                Object.assign(update.set, detailsFromPR(pr, now));
+            });
+        }
+
+        if (fetchReviews && !meta.rateLimited && reviewTargets.length > 0) {
+            const reviewBatch = await fetchPRReviewsBatch(reviewTargets.map(e => e.apiUrl), headers);
             meta.reviewRequests = reviewBatch.requests;
             meta.reviewErrors = reviewBatch.errors;
             if (reviewBatch.rateLimited) {
                 meta.rateLimited = true;
                 meta.rateLimitResetAt = reviewBatch.resetAt;
             }
-        }
 
-        const updates = [];
-        targets.forEach((target, i) => {
-            const pr = details.prs ? details.prs[i] : null;
-            const rData = reviewBatch.results ? reviewBatch.results[i] : null;
-            if (!pr && !rData) return;
+            if (reviewBatch.results) {
+                reviewBatch.results.forEach((rData, i) => {
+                    // Explicit per-PR endpoint check: never overwrite stored reviews on failed fetch
+                    if (!rData || !rData.ok || !rData.reviewsOk) {
+                        return;
+                    }
 
-            const updateFields = {};
-            if (pr) {
-                Object.assign(updateFields, detailsFromPR(pr, now));
-            }
-            if (rData) {
-                const reviewsObj = reviewsFromPR({
-                    reviews: rData.reviews,
-                    comments: rData.comments,
-                    existingReviews: target.reviews || []
-                }, now);
-                if (reviewsObj) {
-                    Object.assign(updateFields, reviewsObj);
-                }
-            }
+                    const target = reviewTargets[i];
+                    const reviewsObj = reviewsFromPR({
+                        reviews: rData.reviews,
+                        comments: rData.comments,
+                        existingReviews: target.reviews || []
+                    }, now);
 
-            if (Object.keys(updateFields).length > 0) {
-                updates.push({
-                    updateOne: {
-                        filter: { repoKey: target.repoKey, prNumber: target.prNumber },
-                        update: { $set: updateFields }
+                    if (reviewsObj) {
+                        const update = getOrCreateUpdate(target);
+                        Object.assign(update.set, reviewsObj);
                     }
                 });
             }
-        });
+        }
+
+        const updates = Array.from(updatesMap.values())
+            .filter(u => Object.keys(u.set).length > 0)
+            .map(u => ({
+                updateOne: {
+                    filter: u.filter,
+                    update: { $set: u.set }
+                }
+            }));
+
         if (updates.length > 0) await Event.bulkWrite(updates, { ordered: false });
     }
 

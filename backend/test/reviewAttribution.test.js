@@ -18,7 +18,8 @@ import {
     detailsFromPR,
     reviewsFromPR,
     toPRShape,
-    syncIndex
+    syncIndex,
+    needsReviews
 } from '../services/contributionIndex.js';
 import {
     extractPRMetrics,
@@ -111,14 +112,50 @@ describe('PR Review Attribution & Decision Tracking', () => {
         assert.equal(result2.substantiveReason, 'written_feedback');
     });
 
-    it('detects substantive activity: inline code comments make any review substantive', () => {
+    it('detects substantive activity: short but meaningful technical feedback is correctly classified', () => {
+        // Concise technical comments that should NOT be rejected just because they are short
+        const shortTechnicalReviews = [
+            { id: 11, state: 'CHANGES_REQUESTED', body: 'nit: use const' },
+            { id: 12, state: 'COMMENTED', body: 'XSS risk' },
+            { id: 13, state: 'CHANGES_REQUESTED', body: 'race condition' },
+            { id: 14, state: 'COMMENTED', body: 'Missing null check' },
+            { id: 15, state: 'COMMENTED', body: 'Fix memory leak' },
+            { id: 16, state: 'COMMENTED', body: 'off-by-one bug' },
+            { id: 17, state: 'COMMENTED', body: 'Use `return early;` here' }
+        ];
+
+        for (const review of shortTechnicalReviews) {
+            const result = evaluateReviewSubstance(review, []);
+            assert.equal(result.isSubstantive, true, `Expected "${review.body}" to be substantive`);
+            assert.equal(result.substantiveReason, 'written_feedback');
+        }
+    });
+
+    it('detects substantive activity: trivial inline comments (done, fixed, +1) do not create false positives', () => {
+        const review = { id: 20, state: 'APPROVED', body: '' };
+
+        // Trivial inline comments like acknowledgments or emojis
+        const trivialInlineComments = [
+            { id: 101, pull_request_review_id: 20, body: 'done' },
+            { id: 102, pull_request_review_id: 20, body: 'fixed' },
+            { id: 103, pull_request_review_id: 20, body: 'ack' },
+            { id: 104, pull_request_review_id: 20, body: 'LGTM' },
+            { id: 105, pull_request_review_id: 20, body: ':+1:' }
+        ];
+
+        const result = evaluateReviewSubstance(review, trivialInlineComments);
+        assert.equal(result.isSubstantive, false, 'Trivial inline comments should not be substantive');
+        assert.equal(result.substantiveReason, 'none');
+    });
+
+    it('detects substantive activity: meaningful inline code comments make review substantive', () => {
         const reviewWithInlineComment = {
             id: 10,
             state: 'APPROVED',
-            body: '' // empty body, but has inline comments on the diff!
+            body: '' // empty body, but has a genuine technical inline comment on code!
         };
         const inlineComments = [
-            { id: 101, pull_request_review_id: 10, body: 'Consider using optional chaining here.', path: 'index.js', line: 15 }
+            { id: 101, pull_request_review_id: 10, body: 'Consider using optional chaining here to avoid TypeError.', path: 'index.js', line: 15 }
         ];
 
         const result = evaluateReviewSubstance(reviewWithInlineComment, inlineComments);
@@ -268,32 +305,52 @@ describe('Multiple Reviewers & Aggregated Attribution', () => {
 });
 
 describe('GitHub API Integration (githubSearch)', () => {
-    it('fetchPRReviews: fetches and parses reviews for a PR URL', async () => {
+    it('fetchPRReviews: fetches and parses reviews for a PR URL with pagination', async () => {
+        const calls = [];
         globalThis.fetch = async (url) => {
-            assert.equal(url, 'https://api.github.com/repos/owner/repo/pulls/10/reviews');
+            calls.push(url);
+            if (url.includes('page=2')) {
+                return jsonResponse([
+                    { id: 2, user: { login: 'reviewer2' }, state: 'CHANGES_REQUESTED', body: 'Needs test coverage' }
+                ]);
+            }
             return jsonResponse([
                 { id: 1, user: { login: 'reviewer1' }, state: 'APPROVED', body: 'Looks good' }
-            ]);
+            ], {
+                headers: { link: '<https://api.github.com/repos/owner/repo/pulls/10/reviews?page=2>; rel="next"' }
+            });
         };
 
         const res = await fetchPRReviews('https://api.github.com/repos/owner/repo/pulls/10', {});
         assert.equal(res.ok, true);
-        assert.equal(res.data.length, 1);
+        assert.equal(res.data.length, 2);
         assert.equal(res.data[0].id, 1);
+        assert.equal(res.data[1].id, 2);
+        assert.equal(calls.length, 2);
     });
 
-    it('fetchPRReviewComments: fetches inline comments for a PR URL', async () => {
+    it('fetchPRReviewComments: fetches inline comments for a PR URL with pagination', async () => {
+        const calls = [];
         globalThis.fetch = async (url) => {
-            assert.equal(url, 'https://api.github.com/repos/owner/repo/pulls/10/comments');
+            calls.push(url);
+            if (url.includes('page=2')) {
+                return jsonResponse([
+                    { id: 202, pull_request_review_id: 2, body: 'Missing null check', path: 'file2.js', line: 40 }
+                ]);
+            }
             return jsonResponse([
                 { id: 201, pull_request_review_id: 1, body: 'Typo here', path: 'file.js', line: 12 }
-            ]);
+            ], {
+                headers: { link: '<https://api.github.com/repos/owner/repo/pulls/10/comments?page=2>; rel="next"' }
+            });
         };
 
         const res = await fetchPRReviewComments('https://api.github.com/repos/owner/repo/pulls/10', {});
         assert.equal(res.ok, true);
-        assert.equal(res.data.length, 1);
+        assert.equal(res.data.length, 2);
         assert.equal(res.data[0].id, 201);
+        assert.equal(res.data[1].id, 202);
+        assert.equal(calls.length, 2);
     });
 
     it('fetchPRReviewsBatch: handles concurrency, rate limits, and errors gracefully', async () => {
@@ -327,12 +384,74 @@ describe('GitHub API Integration (githubSearch)', () => {
         assert.ok(batch.resetAt);
         // First PR succeeded before rate limit hit on second
         assert.equal(batch.results[0].reviews.length, 1);
+        assert.equal(batch.results[0].reviewsOk, true);
         assert.equal(batch.results[1], null);
+    });
+
+    it('fetchPRReviewsBatch: returns explicit endpoint statuses on non-rate-limit errors without crashing', async () => {
+        globalThis.fetch = async (url) => {
+            if (url.includes('/1/reviews')) {
+                return jsonResponse({ message: 'Internal Server Error' }, { status: 500 });
+            }
+            if (url.includes('/2/reviews')) {
+                return jsonResponse([{ id: 2, user: { login: 'bob' }, state: 'APPROVED', body: 'Good work' }]);
+            }
+            if (url.includes('/2/comments')) {
+                return jsonResponse({ message: 'Not Found' }, { status: 404 });
+            }
+            return jsonResponse([]);
+        };
+
+        const prUrls = [
+            'https://api.github.com/repos/owner/repo/pulls/1',
+            'https://api.github.com/repos/owner/repo/pulls/2'
+        ];
+
+        const batch = await fetchPRReviewsBatch(prUrls, {});
+        assert.equal(batch.errors, 2); // 1 reviews error + 1 comments error
+        assert.equal(batch.rateLimited, false);
+
+        // PR 1: reviews failed
+        assert.equal(batch.results[0].ok, false);
+        assert.equal(batch.results[0].reviewsOk, false);
+
+        // PR 2: reviews succeeded, but comments failed
+        assert.equal(batch.results[1].ok, false);
+        assert.equal(batch.results[1].reviewsOk, true);
+        assert.equal(batch.results[1].commentsOk, false);
+        assert.equal(batch.results[1].reviews.length, 1);
     });
 });
 
 describe('Contribution Indexing Integration & Workflow', () => {
     const NOW = new Date('2026-11-08T12:00:00Z');
+    const DAY = 24 * 60 * 60 * 1000;
+    const HOUR = 60 * 60 * 1000;
+
+    it('needsReviews: independent selection using reviewsFetchedAt and refresh window', () => {
+        const registered = new Set(['org/repo']);
+        const base = { repoKey: 'org/repo' };
+        const recent = new Date(NOW.getTime() - 3 * DAY);
+        const old = new Date(NOW.getTime() - 20 * DAY);
+        const fetchedOld = new Date(NOW.getTime() - 25 * HOUR);
+        const fetchedRecent = new Date(NOW.getTime() - 2 * HOUR);
+
+        // Never fetched reviews -> true (even if details are already cached!)
+        assert.equal(needsReviews({ ...base, detailsFetchedAt: fetchedRecent, reviewsFetchedAt: null, mergedAt: old }, registered, NOW), true);
+        assert.equal(needsReviews({ ...base, detailsFetchedAt: fetchedRecent, reviewsFetchedAt: null, mergedAt: recent }, registered, NOW), true);
+
+        // Fetched recently within 24h for recent PR -> false
+        assert.equal(needsReviews({ ...base, detailsFetchedAt: fetchedRecent, reviewsFetchedAt: fetchedRecent, mergedAt: recent }, registered, NOW), false);
+
+        // Fetched >24h ago for recently merged PR (within 14d) -> true (refresh window)
+        assert.equal(needsReviews({ ...base, detailsFetchedAt: fetchedRecent, reviewsFetchedAt: fetchedOld, mergedAt: recent }, registered, NOW), true);
+
+        // Fetched >24h ago for old merged PR (older than 14d) -> false (outside refresh window)
+        assert.equal(needsReviews({ ...base, detailsFetchedAt: fetchedRecent, reviewsFetchedAt: fetchedOld, mergedAt: old }, registered, NOW), false);
+
+        // Unregistered repo -> false
+        assert.equal(needsReviews({ repoKey: 'unregistered/repo', reviewsFetchedAt: null, mergedAt: recent }, registered, NOW), false);
+    });
 
     const samplePR = {
         number: 42,
@@ -413,6 +532,7 @@ describe('Contribution Indexing Integration & Workflow', () => {
             apiUrl: 'https://api.github.com/repos/org/repo/pulls/42',
             mergedAt: NOW,
             detailsFetchedAt: null,
+            reviewsFetchedAt: null,
             reviews: []
         }];
 
@@ -449,12 +569,12 @@ describe('Contribution Indexing Integration & Workflow', () => {
                     }]
                 });
             }
-            if (url.endsWith('/reviews')) {
+            if (url.includes('/reviews')) {
                 return jsonResponse([
                     { id: 501, user: { login: 'reviewer_bob' }, state: 'APPROVED', body: 'Clean implementation!' }
                 ]);
             }
-            if (url.endsWith('/comments')) {
+            if (url.includes('/comments')) {
                 return jsonResponse([]);
             }
             // PR details
@@ -483,6 +603,157 @@ describe('Contribution Indexing Integration & Workflow', () => {
         assert.equal(detailWrite.update.$set.reviews[0].isSubstantive, true);
         assert.deepEqual(detailWrite.update.$set.reviewers, ['reviewer_bob']);
         assert.equal(detailWrite.update.$set.reviewSummary.approvedCount, 1);
+    });
+
+    it('syncIndex: independent review target selection fetches reviews for historical PRs with fresh details', async () => {
+        const calls = { eventWrites: [] };
+        // Historical PR whose details were fetched 1 hour ago (fresh, needsDetails = false),
+        // but whose reviews were never fetched (reviewsFetchedAt = null, needsReviews = true)
+        const ONE_HOUR_AGO = new Date(NOW.getTime() - 60 * 60 * 1000);
+        const fakeEvents = [{
+            repoKey: 'org/repo',
+            prNumber: 99,
+            apiUrl: 'https://api.github.com/repos/org/repo/pulls/99',
+            mergedAt: ONE_HOUR_AGO,
+            detailsFetchedAt: ONE_HOUR_AGO,
+            reviewsFetchedAt: null,
+            reviews: []
+        }];
+
+        const Event = {
+            async bulkWrite(ops) {
+                calls.eventWrites.push(ops);
+                return { upsertedCount: ops.length };
+            },
+            find() {
+                return {
+                    select: () => ({
+                        lean: async () => fakeEvents
+                    })
+                };
+            }
+        };
+
+        const SyncState = {
+            find: () => ({ lean: async () => [{ scope: 'repo:org/repo', lastMergedAt: NOW }] }),
+            updateOne: async () => {}
+        };
+
+        const fetchedUrls = [];
+        globalThis.fetch = async (url) => {
+            fetchedUrls.push(url);
+            if (url.includes('/search/issues')) {
+                return jsonResponse({ total_count: 0, items: [] });
+            }
+            if (url.includes('/reviews')) {
+                return jsonResponse([
+                    { id: 991, user: { login: 'historical_reviewer' }, state: 'APPROVED', body: 'Looks solid' }
+                ]);
+            }
+            if (url.includes('/comments')) {
+                return jsonResponse([]);
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        };
+
+        const meta = await syncIndex({
+            scopes: [{ key: 'repo:org/repo', qualifier: 'repo:org/repo' }],
+            detailFilter: {},
+            registeredKeys: new Set(['org/repo']),
+            headers: {},
+            Event,
+            SyncState,
+            now: NOW,
+            fetchReviews: true
+        });
+
+        // Did NOT request PR details because details are already fresh
+        assert.equal(meta.detailRequests, 0);
+        // DID request reviews because reviewsFetchedAt was null
+        assert.equal(meta.reviewRequests, 2);
+        assert.equal(calls.eventWrites.length, 1);
+
+        const writeOp = calls.eventWrites[0][0].updateOne;
+        assert.deepEqual(writeOp.filter, { repoKey: 'org/repo', prNumber: 99 });
+        assert.equal(writeOp.update.$set.reviews[0].reviewer, 'historical_reviewer');
+        assert.equal(writeOp.update.$set.reviewsFetchedAt, NOW);
+        // stats should not have been updated
+        assert.equal(writeOp.update.$set.stats, undefined);
+    });
+
+    it('syncIndex: failed review endpoint never overwrites previously stored review data', async () => {
+        const calls = { eventWrites: [] };
+        const existingReview = {
+            reviewId: 777,
+            reviewer: 'previous_reviewer',
+            decision: 'APPROVED',
+            isSubstantive: true
+        };
+
+        const fakeEvents = [{
+            repoKey: 'org/repo',
+            prNumber: 55,
+            apiUrl: 'https://api.github.com/repos/org/repo/pulls/55',
+            mergedAt: NOW,
+            detailsFetchedAt: null,
+            reviewsFetchedAt: null,
+            reviews: [existingReview]
+        }];
+
+        const Event = {
+            async bulkWrite(ops) {
+                calls.eventWrites.push(ops);
+                return { upsertedCount: ops.length };
+            },
+            find() {
+                return {
+                    select: () => ({
+                        lean: async () => fakeEvents
+                    })
+                };
+            }
+        };
+
+        const SyncState = {
+            find: () => ({ lean: async () => [{ scope: 'repo:org/repo', lastMergedAt: NOW }] }),
+            updateOne: async () => {}
+        };
+
+        globalThis.fetch = async (url) => {
+            if (url.includes('/search/issues')) {
+                return jsonResponse({ total_count: 0, items: [] });
+            }
+            if (url.includes('/reviews')) {
+                // Endpoint failure (e.g. 500 error)
+                return jsonResponse({ message: 'Internal Server Error' }, { status: 500 });
+            }
+            if (url.includes('/comments')) {
+                return jsonResponse([]);
+            }
+            return jsonResponse(samplePR);
+        };
+
+        const meta = await syncIndex({
+            scopes: [{ key: 'repo:org/repo', qualifier: 'repo:org/repo' }],
+            detailFilter: {},
+            registeredKeys: new Set(['org/repo']),
+            headers: {},
+            Event,
+            SyncState,
+            now: NOW,
+            fetchReviews: true
+        });
+
+        // Detail request succeeded, review request failed with error
+        assert.equal(meta.detailRequests, 1);
+        assert.equal(meta.reviewErrors, 1);
+        assert.equal(calls.eventWrites.length, 1);
+
+        const writeOp = calls.eventWrites[0][0].updateOne;
+        // Detail was updated, but reviews were NEVER overwritten with empty array!
+        assert.ok(writeOp.update.$set.detailsFetchedAt);
+        assert.equal(writeOp.update.$set.reviews, undefined);
+        assert.equal(writeOp.update.$set.reviewsFetchedAt, undefined);
     });
 });
 

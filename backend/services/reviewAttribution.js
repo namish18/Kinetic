@@ -14,7 +14,9 @@ export const REVIEW_DECISIONS = {
     DISMISSED: 'DISMISSED'
 };
 
-const TRIVIAL_REGEX = /^(lgtm|looks good(\s+to\s+me)?|approved|\+1|:\+1:|nice|ok|k|good|thanks|thx|ty|fine|looks fine|passed|ready)[.!\s]*$/i;
+const TRIVIAL_REGEX = /^(lgtm|looks good(\s+to\s+me)?|approved|\+1|:\+1:|nice|ok|k|good|thanks|thx|ty|fine|looks fine|passed|ready|ack|done|fixed|resolved|ditto|same|cool|great|yep|nope|sure)[.!\s]*$/i;
+
+const TECHNICAL_SIGNALS_REGEX = /(^(nit|bug|fix|typo|sec|security|perf|performance|todo|test|refactor|question|suggestion)[\s*:\-])|(`[^`]+`)|(```)|(\b(sql|xss|csrf|cve|injection|leak|overflow|race|deadlock|concurrency|null|nullptr|undefined|unhandled|edge[\s-]case|off[\s-]by[\s-]one|infinite[\s-]loop|vulnerability|bypass|memory|exception|timeout|mutex|lock|query|schema|async|await|const|return|pointer)\b)/i;
 
 /**
  * Normalizes a raw GitHub review state string into a standard decision.
@@ -27,7 +29,7 @@ export function normalizeDecision(state) {
 }
 
 /**
- * True if a review body contains only trivial/boilerplate phrases without substantive content.
+ * True if text contains only trivial/boilerplate phrases or acknowledgments without substantive content.
  */
 export function isTrivialFeedback(body) {
     if (!body || typeof body !== 'string') return true;
@@ -37,46 +39,65 @@ export function isTrivialFeedback(body) {
 }
 
 /**
+ * Evaluates whether a piece of text (review body or inline comment) contains substantive feedback.
+ * Distinguishes concise technical guidance (e.g., "nit: use const", "XSS risk") from generic noise,
+ * and ensures trivial phrases (e.g., "done", "fixed", "LGTM") are rejected.
+ */
+export function isSubstantiveText(text) {
+    if (!text || typeof text !== 'string') return false;
+    const trimmed = text.trim();
+    if (trimmed.length === 0 || isTrivialFeedback(trimmed)) return false;
+
+    // Concise technical feedback matching specific technical indicators/tags
+    if (TECHNICAL_SIGNALS_REGEX.test(trimmed) && trimmed.length >= 6) {
+        return true;
+    }
+
+    // Meaningful general feedback with sufficient descriptive length
+    return trimmed.length >= 15;
+}
+
+/**
  * Evaluates whether a review constitutes substantive review activity.
  *
  * Substantive activity includes:
- * 1. One or more inline code comments on the diff.
- * 2. Meaningful written feedback (constructive review body that is not empty or trivial boilerplate).
+ * 1. One or more meaningful inline code comments on the diff (excluding trivial acknowledgments like "done" or "LGTM").
+ * 2. Meaningful written feedback (constructive review body that is not empty, trivial boilerplate, or superficial).
  *
- * Empty reviews or approvals without feedback are non-substantive.
+ * Empty reviews, approvals without feedback, or trivial reactions are non-substantive.
  */
 export function evaluateReviewSubstance(review, inlineComments = []) {
     const commentsList = Array.isArray(inlineComments) ? inlineComments : [];
-    const inlineCommentsCount = commentsList.length;
-    const hasInlineComments = inlineCommentsCount > 0;
+    const substantiveInlineComments = commentsList.filter(c => c && isSubstantiveText(c.body));
+    const substantiveCommentsCount = substantiveInlineComments.length;
 
-    if (hasInlineComments) {
+    if (substantiveCommentsCount > 0) {
         return {
             isSubstantive: true,
             hasInlineComments: true,
-            inlineCommentsCount,
+            inlineCommentsCount: substantiveCommentsCount,
             substantiveReason: 'inline_comments',
-            details: `Included ${inlineCommentsCount} inline code comment(s)`
+            details: `Included ${substantiveCommentsCount} substantive inline code comment(s)`
         };
     }
 
     const body = (review?.body || '').trim();
-    if (!body || isTrivialFeedback(body) || body.length < 15) {
+    if (isSubstantiveText(body)) {
         return {
-            isSubstantive: false,
-            hasInlineComments: false,
+            isSubstantive: true,
+            hasInlineComments: commentsList.length > 0,
             inlineCommentsCount: 0,
-            substantiveReason: 'none',
-            details: body ? 'Feedback is generic or brief without specific guidance' : 'No written feedback or inline comments provided'
+            substantiveReason: 'written_feedback',
+            details: 'Substantive written review comments provided'
         };
     }
 
     return {
-        isSubstantive: true,
-        hasInlineComments: false,
+        isSubstantive: false,
+        hasInlineComments: commentsList.length > 0,
         inlineCommentsCount: 0,
-        substantiveReason: 'written_feedback',
-        details: 'Substantive written review comments provided'
+        substantiveReason: 'none',
+        details: body ? 'Feedback is generic or brief without specific guidance' : 'No written feedback or substantive comments provided'
     };
 }
 
