@@ -12,24 +12,20 @@ const router = express.Router();
 
 /**
  * GET /api/auth/github
- * Kick off the GitHub OAuth dance
- * Accepts ?role=contributor (default) or ?role=organization
+ * Kick off the GitHub OAuth dance.
+ * SEC-04 Fix: Removed session role setting from req.query to prevent privilege escalation.
  */
-router.get('/github', (req, res, next) => {
-    req.session.role = req.query.role || 'contributor';
-    next();
-}, passport.authenticate('github', { scope: ['user:email'] }));
+router.get('/github', passport.authenticate('github', { scope: ['user:email'] }));
 
 /**
  * GET /api/auth/github/callback
- * GitHub redirects back here after the user authorises.
- * Passport's strategy already ran the full DID + IPFS pipeline for new users.
+ * GitHub redirects back here after authorization.
  */
 router.get(
     '/github/callback',
     passport.authenticate('github', { failureRedirect: '/?error=auth_failed' }),
     async (req, res) => {
-        // Role is already correctly set on req.user by the Passport strategy
+        // Role is safely read directly from req.user (preserved DB role or default contributor)
         const finalRole = req.user.role || 'contributor';
 
         const token = jwt.sign(
@@ -45,7 +41,6 @@ router.get(
         res.redirect(`${frontendURL}${redirectPath}?token=${token}`);
     }
 );
-
 
 // ─────────────────────────────────────────────────────────────
 //  Profile
@@ -90,7 +85,6 @@ router.get('/me', authenticateToken, async (req, res) => {
 /**
  * GET /api/auth/did/:username
  * Public endpoint — resolve a did:key by GitHub username.
- * Returns both the MongoDB index record and the live IPFS document.
  */
 router.get('/did/:username', async (req, res) => {
     try {
@@ -99,7 +93,6 @@ router.get('/did/:username', async (req, res) => {
             return res.status(404).json({ error: `No DID found for @${req.params.username}` });
         }
 
-        // Try to fetch the live document from IPFS (w3s.link / dweb.link gateways)
         let liveDocument = null;
         if (user.ipfsCID && !user.ipfsCID.startsWith('sha256-')) {
             liveDocument = await getFromIPFS(user.ipfsCID);
@@ -107,16 +100,13 @@ router.get('/did/:username', async (req, res) => {
 
         res.json({
             success: true,
-            // MongoDB index record
             mongoRecord: {
                 github: user.github,
                 did: user.did,
                 ipfsCID: user.ipfsCID,
                 wallet: user.wallet,
             },
-            // Live IPFS document (or cached copy from MongoDB)
             didDocument: liveDocument || user.didDocument,
-            // Public IPFS gateway link (Protocol Labs / Storacha)
             gatewayUrl: user.ipfsCID && !user.ipfsCID.startsWith('sha256-')
                 ? `https://w3s.link/ipfs/${user.ipfsCID}`
                 : null,
@@ -129,15 +119,12 @@ router.get('/did/:username', async (req, res) => {
 
 /**
  * GET /api/auth/did-resolve/self
- * Re-derive and return your own DID document live from the key-did-resolver.
- * Useful for verifying the DID is still cryptographically valid.
  */
 router.get('/did-resolve/self', authenticateToken, async (req, res) => {
     try {
         const user = await User.findById(req.user.id);
         if (!user) return res.status(404).json({ error: 'User not found' });
 
-        // Re-run key-did-resolver against the user's did:key
         const { didString, didDocument } = await authenticateDID(user.githubId);
 
         res.json({
@@ -162,7 +149,6 @@ router.get('/did-resolve/self', authenticateToken, async (req, res) => {
 
 /**
  * PUT /api/auth/wallet
- * Link a Flow wallet address to the user's DID (JWT required)
  */
 router.put('/wallet', authenticateToken, async (req, res) => {
     try {
