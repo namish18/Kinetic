@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { CID } from 'multiformats/cid';
 import ContributionScore from '../models/ContributionScore.js';
 
@@ -66,13 +67,41 @@ export async function fetchCIEvidence({ repository, prNumber, commitSha, token, 
     }
 }
 
+// How long a package with final CI results is trusted before CI is checked again.
+export const EVIDENCE_RECHECK_MS = 24 * 60 * 60 * 1000;
+
 /**
- * Evidence is only (re)built when a contribution has none yet,
- * or when its score changed since the last package was stored.
+ * CI is "pending" while it can still change: it could not be read, no check
+ * runs exist yet, or some run has not completed. A completed failure is final.
  */
-export function shouldRecordEvidence(previous, newScore) {
+export function isCIPending(ci) {
+    if (!ci || ci.verified === null || ci.verified === undefined) return true;
+    const runs = ci.runs || [];
+    return runs.length === 0 || runs.some(r => r.status !== 'completed');
+}
+
+/**
+ * Fingerprint of an evidence package. Same package, same digest.
+ * Used to tell whether the evidence itself changed, whatever the score did.
+ */
+export function hashEvidencePackage(evidencePackage) {
+    return createHash('sha256').update(JSON.stringify(evidencePackage)).digest('hex');
+}
+
+/**
+ * Decides whether evidence needs to be looked at again. This only limits
+ * GitHub calls: whether a new package is stored is decided by its digest.
+ * Refresh when there is no valid package yet, the score or algorithm version
+ * changed, CI was still pending last time, or the last check is older than
+ * EVIDENCE_RECHECK_MS.
+ */
+export function shouldRefreshEvidence(previous, { score, algorithmVersion, now = new Date() } = {}) {
     if (!previous || !isValidCid(previous.evidenceCID)) return true;
-    return previous.score !== newScore;
+    if (previous.score !== score) return true;
+    if (algorithmVersion && previous.algorithmVersion !== algorithmVersion) return true;
+    if (previous.evidencePending) return true;
+    if (!previous.evidenceDigest || !previous.evidenceCheckedAt) return true;
+    return new Date(now).getTime() - new Date(previous.evidenceCheckedAt).getTime() >= EVIDENCE_RECHECK_MS;
 }
 
 /**
@@ -153,22 +182,73 @@ export async function getEvidencePackage(cid) {
 }
 
 /**
- * Builds, stores and links the evidence package to its contribution.
- * Returns the CID, or null if it couldn't be stored. Scoring never fails because of this.
+ * Builds the evidence package, stores it on IPFS if it changed, and links its
+ * CID to the contribution.
+ *
+ * - If the package is identical to the one already linked (same digest), nothing
+ *   new is stored; only the check time and pending flag are updated.
+ * - The CID is only returned once the database confirms it was saved on the
+ *   matching contribution record. If no record matched or the write failed,
+ *   this returns null and logs the reason.
+ * - Never throws, so scoring never fails because of evidence.
  */
-export async function recordContributionEvidence(input, { store, model = ContributionScore, logger = console } = {}) {
+export async function recordContributionEvidence(input, { store, model = ContributionScore, logger = console, previous = null, now = new Date() } = {}) {
     try {
         const evidencePackage = buildEvidencePackage(input);
-        const cid = await storeEvidencePackage(evidencePackage, store ? { store } : undefined);
+        const digest = hashEvidencePackage(evidencePackage);
+        const pending = isCIPending(input.ci);
+
+        const unchanged = Boolean(previous) && previous.evidenceDigest === digest && isValidCid(previous.evidenceCID);
+        const cid = unchanged
+            ? previous.evidenceCID
+            : await storeEvidencePackage(evidencePackage, store ? { store } : undefined);
 
         const { username, repository, prNumber } = input.contribution;
-        await model.findOneAndUpdate(
+        const updated = await model.findOneAndUpdate(
             { username, repository, prNumber },
-            { $set: { evidenceCID: cid } }
+            { $set: { evidenceCID: cid, evidenceDigest: digest, evidencePending: pending, evidenceCheckedAt: new Date(now) } },
+            { new: true }
         );
+
+        if (!updated) {
+            logger.warn(`Evidence package ${cid} was stored but no contribution record matched ${repository}#${prNumber} for ${username}; CID not linked`);
+            return null;
+        }
+        if (updated.evidenceCID !== cid) {
+            logger.warn(`Evidence CID ${cid} was not persisted on ${repository}#${prNumber}`);
+            return null;
+        }
         return cid;
     } catch (err) {
         logger.warn(`Evidence package not stored: ${err.message}`);
+        return null;
+    }
+}
+
+/**
+ * Full evidence step for one scored contribution: decide whether to refresh,
+ * read CI evidence, then record it. Returns the linked CID, or null when
+ * nothing was linked. Never throws.
+ *
+ * deps (all optional, for tests): fetchCI, record, logger, now
+ */
+export async function ensureContributionEvidence({ contribution, scoreInputs, score, algorithm, previous, token }, deps = {}) {
+    const { fetchCI = fetchCIEvidence, record = recordContributionEvidence, logger = console, now = new Date(), store, model } = deps;
+    try {
+        if (!shouldRefreshEvidence(previous, { score, algorithmVersion: algorithm?.version, now })) {
+            return previous.evidenceCID;
+        }
+        const ci = await fetchCI({
+            repository: contribution.repository,
+            prNumber: contribution.prNumber,
+            token
+        });
+        return await record(
+            { contribution, ci, scoreInputs, score, algorithm },
+            { previous, logger, now, ...(store && { store }), ...(model && { model }) }
+        );
+    } catch (err) {
+        logger.warn(`Evidence step failed: ${err.message}`);
         return null;
     }
 }

@@ -9,7 +9,7 @@ import User from '../models/User.js';
 import { calculateSpamPenalty } from './kineticMechanisms.js';
 import AlgorithmVersion from '../models/AlgorithmVersion.js';
 import ContributionScore from '../models/ContributionScore.js';
-import { recordContributionEvidence, fetchCIEvidence, shouldRecordEvidence } from './evidenceService.js';
+import { ensureContributionEvidence } from './evidenceService.js';
 import ContributionEvent from '../models/ContributionEvent.js';
 import { syncIndex, toPRShape } from './contributionIndex.js';
 
@@ -440,9 +440,10 @@ export async function computeContributionScore(username, token, options = {}) {
             totalPoints += prPoints;
 
             const scoreKey = { username, repository: record.repoFullName, prNumber: record.prData.number };
-            const previousScore = await ContributionScore.findOne(scoreKey).select('score evidenceCID').lean().catch(() => null);
+            const previousScore = await ContributionScore.findOne(scoreKey).select('score algorithmVersion evidenceCID evidenceDigest evidencePending evidenceCheckedAt').lean().catch(() => null);
 
             // ── Persist score with algorithm version + config snapshot ──
+            let scorePersisted = false;
             try {
                 await ContributionScore.findOneAndUpdate(
                     scoreKey,
@@ -466,28 +467,26 @@ export async function computeContributionScore(username, token, options = {}) {
                     },
                     { upsert: true, new: true }
                 );
+                scorePersisted = true;
             } catch (dbErr) {
                 console.error('Failed to persist contribution score:', dbErr.message);
             }
 
-            // Store the evidence package on IPFS and link its CID to this contribution
-            if (shouldRecordEvidence(previousScore, prPoints)) {
-                const ci = await fetchCIEvidence({
-                    repository: record.repoFullName,
-                    prNumber: record.prData.number,
-                    token: githubToken
-                });
-                await recordContributionEvidence({
+            // Store the evidence package on IPFS and link its CID to this contribution.
+            // Skipped when the score itself could not be saved, since there is nothing to link to.
+            if (scorePersisted) {
+                await ensureContributionEvidence({
                     contribution: {
                         ...scoreKey,
                         prUrl: record.prData.html_url,
                         mergedAt: record.prData.merged_at
                     },
-                    ci,
                     scoreInputs: { ...record.metrics, reputation: contributorReputation, weights: result.details?.weights },
                     score: prPoints,
-                    algorithm: { name: ALGORITHM_NAME, version: ALGORITHM_VERSION }
-                });
+                    algorithm: { name: ALGORITHM_NAME, version: ALGORITHM_VERSION },
+                    previous: previousScore,
+                    token: githubToken
+                }, options.evidence);
             }
 
             prDetails.push({
