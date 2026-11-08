@@ -16,7 +16,8 @@
 
 import ContributionEvent from '../models/ContributionEvent.js';
 import ContributionSyncState from '../models/ContributionSyncState.js';
-import { fetchAllSearchResults, fetchPRDetails } from './githubSearch.js';
+import { fetchAllSearchResults, fetchPRDetails, fetchPRReviewsBatch } from './githubSearch.js';
+import { normalizeReviews } from './reviewAttribution.js';
 
 // Re-fetch details for PRs merged this recently, so review comments added
 // shortly after merge are still counted.
@@ -74,8 +75,8 @@ export function eventFromSearchItem(item, now = new Date()) {
 /**
  * Index fields taken from a full PR object (GET /repos/:o/:r/pulls/:n).
  */
-export function detailsFromPR(pr, now = new Date()) {
-    return {
+export function detailsFromPR(pr, now = new Date(), reviewData = null) {
+    const details = {
         ...(pr.base?.repo?.full_name && { repo: pr.base.repo.full_name }),
         mergeCommitSha: pr.merge_commit_sha || null,
         headSha: pr.head?.sha || null,
@@ -90,6 +91,34 @@ export function detailsFromPR(pr, now = new Date()) {
             labels: (pr.labels || []).map(l => l.name)
         },
         detailsFetchedAt: now
+    };
+
+    if (reviewData) {
+        const reviewsObj = reviewsFromPR(reviewData, now);
+        if (reviewsObj) {
+            Object.assign(details, reviewsObj);
+        }
+    }
+
+    return details;
+}
+
+/**
+ * Normalizes PR review records and returns fields to update on ContributionEvent.
+ */
+export function reviewsFromPR(reviewData, now = new Date()) {
+    if (!reviewData) return null;
+    const normalized = normalizeReviews(
+        reviewData.reviews || [],
+        reviewData.comments || [],
+        reviewData.existingReviews || []
+    );
+    return {
+        reviews: normalized.reviews,
+        reviewers: normalized.reviewers,
+        substantiveReviewers: normalized.substantiveReviewers,
+        reviewSummary: normalized.reviewSummary,
+        reviewsFetchedAt: now
     };
 }
 
@@ -111,7 +140,11 @@ export function toPRShape(event) {
         comments: s.comments,
         review_comments: s.reviewComments,
         merged: s.merged,
-        labels: (s.labels || []).map(name => ({ name }))
+        labels: (s.labels || []).map(name => ({ name })),
+        reviews: event.reviews || [],
+        reviewers: event.reviewers || [],
+        substantiveReviewers: event.substantiveReviewers || [],
+        reviewSummary: event.reviewSummary || null
     };
 }
 
@@ -125,6 +158,20 @@ export function needsDetails(event, registeredKeys, now = new Date()) {
     const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
     const detailsOld = new Date(event.detailsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
     return recentlyMerged && detailsOld;
+}
+
+/**
+ * True when an event in a registered repo has no reviews fetched yet, or was merged
+ * within the refresh window and its reviews are older than the minimum age.
+ * Evaluated independently from needsDetails so historical PRs with fresh details
+ * still receive review attribution.
+ */
+export function needsReviews(event, registeredKeys, now = new Date()) {
+    if (!registeredKeys.has(event.repoKey)) return false;
+    if (!event.reviewsFetchedAt) return true;
+    const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
+    const reviewsOld = new Date(event.reviewsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
+    return recentlyMerged && reviewsOld;
 }
 
 function duplicateKeyOnly(error) {
@@ -213,13 +260,16 @@ export async function syncIndex({
     headers,
     Event = ContributionEvent,
     SyncState = ContributionSyncState,
-    now = new Date()
+    now = new Date(),
+    fetchReviews = false
 }) {
     const meta = {
         githubRequests: 0,
         searchRequests: 0,
         detailRequests: 0,
         detailErrors: 0,
+        reviewRequests: 0,
+        reviewErrors: 0,
         newEvents: 0,
         alreadyIndexed: 0,
         truncated: false,
@@ -290,33 +340,91 @@ export async function syncIndex({
     if (meta.errors.length === 0) {
         const indexed = await Event
             .find({ ...detailFilter, repoKey: { $in: [...registeredKeys] } })
-            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt')
+            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt reviewsFetchedAt reviews')
             .lean();
-        const targets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
 
-        const details = await fetchPRDetails(targets.map(e => e.apiUrl), headers);
-        meta.detailRequests = details.requests;
-        meta.detailErrors = details.errors;
-        if (details.rateLimited) {
-            meta.rateLimited = true;
-            meta.rateLimitResetAt = details.resetAt;
+        // Independent selection for details and reviews so historical PRs whose
+        // details are already cached still receive review attribution.
+        const detailTargets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
+        const reviewTargets = fetchReviews
+            ? indexed.filter(e => e.apiUrl && needsReviews(e, registeredKeys, now))
+            : [];
+
+        const updatesMap = new Map();
+        function getOrCreateUpdate(target) {
+            const key = `${target.repoKey}#${target.prNumber}`;
+            if (!updatesMap.has(key)) {
+                updatesMap.set(key, {
+                    filter: { repoKey: target.repoKey, prNumber: target.prNumber },
+                    set: {}
+                });
+            }
+            return updatesMap.get(key);
         }
 
-        const updates = [];
-        details.prs.forEach((pr, i) => {
-            if (!pr) return;
-            updates.push({
-                updateOne: {
-                    filter: { repoKey: targets[i].repoKey, prNumber: targets[i].prNumber },
-                    update: { $set: detailsFromPR(pr, now) }
-                }
+        if (detailTargets.length > 0) {
+            const details = await fetchPRDetails(detailTargets.map(e => e.apiUrl), headers);
+            meta.detailRequests = details.requests;
+            meta.detailErrors = details.errors;
+            if (details.rateLimited) {
+                meta.rateLimited = true;
+                meta.rateLimitResetAt = details.resetAt;
+            }
+
+            details.prs.forEach((pr, i) => {
+                if (!pr) return;
+                const update = getOrCreateUpdate(detailTargets[i]);
+                Object.assign(update.set, detailsFromPR(pr, now));
             });
-        });
+        }
+
+        if (fetchReviews && !meta.rateLimited && reviewTargets.length > 0) {
+            const reviewBatch = await fetchPRReviewsBatch(reviewTargets.map(e => e.apiUrl), headers);
+            meta.reviewRequests = reviewBatch.requests;
+            meta.reviewErrors = reviewBatch.errors;
+            if (reviewBatch.rateLimited) {
+                meta.rateLimited = true;
+                meta.rateLimitResetAt = reviewBatch.resetAt;
+            }
+
+            if (reviewBatch.results) {
+                reviewBatch.results.forEach((rData, i) => {
+                    // Explicit per-PR endpoint check: never overwrite stored reviews on failed fetch
+                    if (!rData || !rData.ok || !rData.reviewsOk) {
+                        return;
+                    }
+
+                    const target = reviewTargets[i];
+                    const reviewsObj = reviewsFromPR({
+                        reviews: rData.reviews,
+                        comments: rData.comments,
+                        existingReviews: target.reviews || []
+                    }, now);
+
+                    if (reviewsObj) {
+                        const update = getOrCreateUpdate(target);
+                        Object.assign(update.set, reviewsObj);
+                    }
+                });
+            }
+        }
+
+        const updates = Array.from(updatesMap.values())
+            .filter(u => Object.keys(u.set).length > 0)
+            .map(u => ({
+                updateOne: {
+                    filter: u.filter,
+                    update: { $set: u.set }
+                }
+            }));
+
         if (updates.length > 0) await Event.bulkWrite(updates, { ordered: false });
     }
 
-    meta.githubRequests = meta.searchRequests + meta.detailRequests;
+    meta.reviewRequests = meta.reviewRequests || 0;
+    meta.reviewErrors = meta.reviewErrors || 0;
+    meta.githubRequests = meta.searchRequests + meta.detailRequests + meta.reviewRequests;
     meta.stale = meta.errors.length > 0 || meta.rateLimited;
-    meta.partial = meta.stale || meta.incomplete || meta.detailErrors > 0;
+    meta.partial = meta.stale || meta.incomplete || meta.detailErrors > 0 || meta.reviewErrors > 0;
     return meta;
 }
