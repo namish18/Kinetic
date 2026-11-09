@@ -160,9 +160,9 @@ The implementation supports two payout paths:
 
 ### 8.1 PR Webhook Payout
 
-- Calculates payout using the individual PR score.
-- 1 score point corresponds to 0.1 FLOW.
-- Maximum payout is capped at 10 FLOW per PR.
+- Calculates payout using the normalized individual PR score.
+- Payout = `min(10, round(PRScore × 0.1, 3))` FLOW.
+- The payout is capped at 10 FLOW per PR.
 
 ### 8.2 Organization Payout
 
