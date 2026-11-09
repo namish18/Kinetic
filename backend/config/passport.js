@@ -1,16 +1,12 @@
 /**
  * Passport GitHub OAuth Strategy
  *
- * On first login:
- *  1. Derives Ed25519 seed from GitHub ID + DID_SEED_SECRET (HMAC-SHA256)
- *  2. Generates a real did:key (Ed25519) via tweetnacl + multiformats
- *  3. Uploads enriched identity document to IPFS via Helia (Protocol Labs)
- *  4. Persists the DID + CID reference in MongoDB
- *
- * Returning users are looked up by githubId — no re-processing needed.
+ * SEC-04 Fix:
+ * 1. Existing users retain their database role and cannot be overwritten via session/query inputs.
+ * 2. New users strictly default to the 'contributor' role.
+ * 3. Preserves Ed25519 DID generation and IPFS publishing pipeline.
  */
 
-// ⚠️  MUST be first: loads .env before GitHubStrategy reads process.env
 import 'dotenv/config';
 
 import passport from 'passport';
@@ -44,27 +40,15 @@ passport.use(
                 process.env.GITHUB_CALLBACK_URL ||
                 'http://localhost:5000/api/auth/github/callback',
             scope: ['user:email'],
-            passReqToCallback: true,  // ← gives us access to req.session inside the verify fn
+            passReqToCallback: true,
         },
         async (req, accessToken, refreshToken, profile, done) => {
             try {
-                // Role comes from the session set in GET /api/auth/github?role=…
-                const sessionRole = req.session?.role || 'contributor';
-
                 // ── Returning user ──────────────────────────────────────────
                 let user = await User.findOne({ githubId: profile.id });
                 if (user) {
-                    // Allow role upgrade if they explicitly re-authenticated with a different role
-                    if (sessionRole && user.role !== sessionRole) {
-                        user = await User.findByIdAndUpdate(
-                            user._id,
-                            { role: sessionRole },
-                            { new: true }
-                        );
-                        console.log(`🔄 Existing user @${user.github} role updated → ${sessionRole}`);
-                    } else {
-                        console.log(`✅ Existing user: @${user.github}  DID: ${user.did}`);
-                    }
+                    // SEC-04 FIX: Ignore untrusted sessionRole updates and preserve existing DB role
+                    console.log(`✅ Existing user logged in: @${user.github} | Role: ${user.role} | DID: ${user.did}`);
                     return done(null, user);
                 }
 
@@ -72,7 +56,7 @@ passport.use(
                 console.log(`\n🆕 New user: @${profile.username} — running DID + IPFS pipeline`);
 
                 // Step 1 & 2: Generate did:key from Ed25519 keypair
-                const { didString, didDocument } = authenticateDID(profile.id); // sync
+                const { didString, didDocument } = authenticateDID(profile.id);
                 console.log(`   🔑 did:key: ${didString}`);
 
                 // Step 3: Build enriched identity document
@@ -83,7 +67,10 @@ passport.use(
                 const ipfsCID = await uploadToIPFS(identityDoc);
                 console.log(`   📌 Stored on IPFS — CID: ${ipfsCID}`);
 
-                // Step 5: Persist in MongoDB — include role from session
+                // SEC-04 FIX: Always assign default 'contributor' role to new OAuth users
+                const defaultRole = 'contributor';
+
+                // Step 5: Persist in MongoDB with safe default role
                 user = await User.create({
                     githubId: profile.id,
                     github: profile.username,
@@ -93,9 +80,9 @@ passport.use(
                     did: didString,
                     ipfsCID,
                     didDocument: identityDoc,
-                    role: sessionRole,   // ← use the role from session, not the default
+                    role: defaultRole,
                 });
-                console.log(`   ✅ MongoDB record created for @${user.github} as ${sessionRole}\n`);
+                console.log(`   ✅ MongoDB record created for @${user.github} with role: ${defaultRole}\n`);
 
                 return done(null, user);
             } catch (error) {

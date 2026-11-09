@@ -3,7 +3,11 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
 import { computeOrgContributors } from '../services/contributionService.js';
+ feature/sec-04-oauth-role-escalation
+ feature/sec-04-oauth-role-escalation
+
  fix/remove-fallback-wallet-repo
+main
 
 import {
     validateAddRepository,
@@ -12,6 +16,10 @@ import {
     validateRepoConfig,
     normalizeRepoName
 } from '../middleware/validate.js';
+feature/sec-04-oauth-role-escalation
+main
+
+ main
  main
 
 const router = express.Router();
@@ -29,7 +37,11 @@ function authenticateToken(req, res, next) {
     }
 }
 
+feature/sec-04-oauth-role-escalation
+ feature/sec-04-oauth-role-escalation
+
  fix/remove-fallback-wallet-repo
+main
 
 import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
 
@@ -88,7 +100,11 @@ router.get('/info', authenticateToken, async (req, res) => {
 });
 
 /**
+ feature/sec-04-oauth-role-escalation
+feature/sec-04-oauth-role-escalation
+
  fix/remove-fallback-wallet-repo
+ main
  * Normalize a repo identifier to "owner/repo" format.
  * Accepts full GitHub URLs, github.com/owner/repo, or plain owner/repo.
  */
@@ -135,10 +151,18 @@ router.post('/repositories', authenticateToken, validateAddRepository, async (re
  */
 router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), async (req, res) => {
     try {
+ feature/sec-04-oauth-role-escalation
+feature/sec-04-oauth-role-escalation
+        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+
+        const repoName = req.normalizedRepoId;
+main
+
  fix/remove-fallback-wallet-repo
         const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
 
         const repoName = req.normalizedRepoId;
+ main
  main
         const pat = process.env.GITHUB_PAT;
 
@@ -172,7 +196,11 @@ router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdPa
 /**
  * PUT /api/org/repositories/:repoId/branches
  */
-fix/remove-fallback-wallet-repo
+ feature/sec-04-oauth-role-escalation
+ feature/sec-04-oauth-role-escalation
+
+fix/remove-fallback-wallet-r
+main
 router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
 
 router.put('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), validateUpdateBranches, async (req, res) => {
@@ -282,8 +310,16 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
     }
 });
 
+ feature/sec-04-oauth-role-escalation
+ feature/sec-04-oauth-role-escalation
+export default router;
+
+export default router;
+ main
+
  fix/remove-fallback-wallet-repo
 export default router;
 
 export default router;
 main
+ main
