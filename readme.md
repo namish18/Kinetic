@@ -100,19 +100,37 @@ You will also need the following external accounts and credentials:
    npm install
    ```
 
-3. Create a `.env` file in the `backend/` directory with the following variables:
+3. Create your environment file and fill in every required value:
 
-   ```env
-   PORT=5000
-   MONGODB_URI=<your-mongodb-connection-string>
-   GITHUB_CLIENT_ID=<your-github-oauth-client-id>
-   GITHUB_CLIENT_SECRET=<your-github-oauth-client-secret>
-   SESSION_SECRET=<a-secure-random-string>
-   JWT_SECRET=<a-secure-random-string>
-   FRONTEND_URL=http://localhost:3000
-   FLOW_ADDRESS=<your-flow-testnet-account-address>
-   FLOW_PRIVATE_KEY=<your-flow-testnet-private-key>
+   ```bash
+   cp .env.example .env
    ```
+
+   Generate each secret separately, because they must all be different:
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+   ```
+
+   The server checks its configuration before doing anything else. It refuses to start if a required value is missing, weak or still a placeholder, and the error names each variable without printing its value.
+
+   | Variable | Required | Notes |
+   | --- | --- | --- |
+   | `MONGODB_URI` | Yes | `mongodb://` or `mongodb+srv://` connection string |
+   | `GITHUB_CLIENT_ID` | Yes | From your GitHub OAuth app |
+   | `GITHUB_CLIENT_SECRET` | Yes | From your GitHub OAuth app |
+   | `SESSION_SECRET` | Yes | Random, at least 32 bytes |
+   | `JWT_SECRET` | Yes | Random, at least 32 bytes |
+   | `GITHUB_WEBHOOK_SECRET` | Yes | Random, at least 32 bytes. Enter the same value in your GitHub webhook settings |
+   | `DID_SEED_SECRET` | Yes | Random, at least 32 bytes. Do not change it once users exist, because every user's DID is derived from it |
+   | `PORT` | No | Defaults to `5000` |
+   | `FRONTEND_URL` | No | Defaults to `http://localhost:3000` |
+   | `GITHUB_CALLBACK_URL` | No | Defaults to `http://localhost:5000/api/auth/github/callback` |
+   | `GITHUB_PAT` | No | Raises GitHub API rate limits for contribution scoring |
+   | `FLOW_ADDRESS` | No | `0x` followed by 16 hexadecimal characters. Needed to read on-chain payouts |
+   | `FLOW_CONTRACT_ADDRESS` | No | Defaults to `FLOW_ADDRESS` |
+   | `FLOW_PRIVATE_KEY` | No | 64 hexadecimal characters. Without it the server runs but on-chain payout transactions fail |
+   | `REPUTATION_ALPHA`, `_BETA`, `_GAMMA`, `_DELTA` | No | Historical reputation weights |
 
 4. Start the development server:
 
