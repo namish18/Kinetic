@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './config/loadEnv.js'; // Must stay first: stops startup before any other module runs with bad configuration.
 
 import express from 'express';
 import cors from 'cors';
@@ -19,7 +19,7 @@ import webhookRoutes from './routes/webhook.js';
 import { stopHelia } from './services/didService.js';
 import { ensureAlgorithmVersion } from './services/contributionService.js';
 
-// (env vars loaded via import 'dotenv/config' at top)
+// (env vars loaded and validated by config/loadEnv.js at top)
 
 // ESM __dirname shim
 const __filename = fileURLToPath(import.meta.url);
@@ -36,7 +36,7 @@ const app = express();
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'dev_session_secret',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
   })
