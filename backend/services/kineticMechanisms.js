@@ -11,17 +11,59 @@ import { computeContributionScore } from './contributionService.js';
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Verifies a GitHub Actions run to ensure the code actually executes 
- * in a real CI environment, proving it's not a spam repository.
- * 
- * @param {string} ownerRepo - Format: "username/repo"
+ * Finds the expected commit a CI run ran on. Expected SHAs may be abbreviated
+ * (7-40 hex chars) and match as a prefix of the run's full head SHA.
+ *
+ * @param {string} runHeadSha - head_sha of the workflow run
+ * @param {{ sha: string, kind: string }[]} expectedShas
+ * @returns {{ sha: string, kind: string } | null}
+ */
+export function matchRunCommit(runHeadSha, expectedShas = []) {
+    if (!runHeadSha) return null;
+    const head = runHeadSha.toLowerCase();
+    for (const expected of expectedShas) {
+        const sha = expected?.sha?.toLowerCase();
+        if (sha && sha.length >= 7 && head.startsWith(sha)) {
+            return { sha: runHeadSha, kind: expected.kind };
+        }
+    }
+    return null;
+}
+
+/**
+ * Verifies a GitHub Actions run and returns it as CI evidence for a commit.
+ *
+ * A run counts as verification only if it completed successfully and, when
+ * expected commits are given, it ran on one of them: the PR's head SHA (PR CI)
+ * or its merge commit (post-merge CI). A run from any other commit does not
+ * verify the evaluated commit. Without expected commits only the run's outcome
+ * is checked and matchedCommit is null, so callers can tell the run was not
+ * tied to a commit.
+ *
+ * @param {string} ownerRepo - Format: "owner/repo"
  * @param {string|number} runId - The GitHub Actions run ID
  * @param {string} token - GitHub PAT
- * @returns {Promise<boolean>} True if the CI run was successful
+ * @param {{ expectedShas?: { sha: string, kind: string }[] }} [options]
+ * @returns {Promise<{ verified: boolean, runId: number, headSha: string|null,
+ *   status: string|null, conclusion: string|null,
+ *   matchedCommit: { sha: string, kind: string }|null, reason: string|null,
+ *   confirmed: boolean }>} confirmed is true when GitHub returned the run
  */
-export async function verifyProofOfBuild(ownerRepo, runId, token) {
+export async function verifyProofOfBuild(ownerRepo, runId, token, { expectedShas = [] } = {}) {
     if (!token) throw new Error("GitHub token required for CI verification");
 
+    const evidence = {
+        verified: false,
+        runId: Number(runId),
+        headSha: null,
+        status: null,
+        conclusion: null,
+        matchedCommit: null,
+        reason: null,
+        confirmed: false
+    };
+
+    let runData;
     try {
         const response = await fetch(`https://api.github.com/repos/${ownerRepo}/actions/runs/${runId}`, {
             headers: {
@@ -29,16 +71,41 @@ export async function verifyProofOfBuild(ownerRepo, runId, token) {
                 'Authorization': `Bearer ${token}`
             }
         });
-
-        if (!response.ok) return false;
-
-        const runData = await response.json();
-
-        // Proof-of-Build requires the code to actually compile/pass tests
-        return runData.status === 'completed' && runData.conclusion === 'success';
+        if (!response.ok) {
+            evidence.reason = response.status === 404
+                ? `CI run ${runId} not found in ${ownerRepo}`
+                : `GitHub returned ${response.status} for CI run ${runId}`;
+            return evidence;
+        }
+        runData = await response.json();
     } catch (error) {
-        return false;
+        evidence.reason = `Could not reach GitHub: ${error.message}`;
+        return evidence;
     }
+
+    evidence.confirmed = true;
+    evidence.headSha = runData.head_sha || null;
+    evidence.status = runData.status || null;
+    evidence.conclusion = runData.conclusion || null;
+
+    if (expectedShas.length > 0) {
+        evidence.matchedCommit = matchRunCommit(evidence.headSha, expectedShas);
+        if (!evidence.matchedCommit) {
+            const expected = expectedShas.map(e => `${e.kind} ${e.sha}`).join(', ');
+            evidence.reason = `CI run ${runId} ran on commit ${evidence.headSha || 'unknown'}, not the evaluated commit (${expected})`;
+            return evidence;
+        }
+    }
+
+    // Proof-of-Build requires the code to actually compile/pass tests
+    if (evidence.status !== 'completed') {
+        evidence.reason = `CI run ${runId} has not completed (status: ${evidence.status})`;
+    } else if (evidence.conclusion !== 'success') {
+        evidence.reason = `CI run ${runId} did not succeed (conclusion: ${evidence.conclusion})`;
+    } else {
+        evidence.verified = true;
+    }
+    return evidence;
 }
 
 // ─────────────────────────────────────────────────────────────
