@@ -66,6 +66,7 @@ export function eventFromSearchItem(item, now = new Date()) {
         title: item.title,
         url: item.html_url || item.pull_request?.html_url,
         apiUrl: item.pull_request?.url,
+        ...(item.created_at && { createdAt: new Date(item.created_at) }),
         mergedAt: item.pull_request?.merged_at ? new Date(item.pull_request.merged_at) : null,
         fetchedAt: now
     };
@@ -77,6 +78,7 @@ export function eventFromSearchItem(item, now = new Date()) {
 export function detailsFromPR(pr, now = new Date()) {
     return {
         ...(pr.base?.repo?.full_name && { repo: pr.base.repo.full_name }),
+        ...(pr.created_at && { createdAt: new Date(pr.created_at) }),
         mergedBy: pr.merged_by ? { login: pr.merged_by.login, id: pr.merged_by.id } : null,
         mergeCommitSha: pr.merge_commit_sha || null,
         headSha: pr.head?.sha || null,
@@ -103,6 +105,7 @@ export function toPRShape(event) {
         number: event.prNumber,
         title: event.title,
         html_url: event.url,
+        created_at: event.createdAt ? isoSeconds(event.createdAt) : null,
         merged_at: event.mergedAt ? isoSeconds(event.mergedAt) : null,
         base: { repo: { full_name: event.repo } },
         additions: s.additions,

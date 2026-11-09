@@ -12,7 +12,7 @@ import {
     toPRShape,
     upsertEvents
 } from '../services/contributionIndex.js';
-import { extractPRMetrics } from '../services/contributionService.js';
+import { extractPRMetrics, calculatePRScore } from '../services/contributionService.js';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -29,9 +29,10 @@ function jsonResponse(body, { status = 200, headers = {} } = {}) {
     });
 }
 
-function searchItem(n, { repo = 'nodejs/node', login = 'alice', mergedAt = '2026-11-01T10:00:00Z' } = {}) {
+function searchItem(n, { repo = 'nodejs/node', login = 'alice', mergedAt = '2026-11-01T10:00:00Z', createdAt = '2026-10-30T09:00:00Z' } = {}) {
     return {
         number: n,
+        created_at: createdAt,
         title: `PR ${n}`,
         html_url: `https://github.com/${repo}/pull/${n}`,
         repository_url: `https://api.github.com/repos/${repo}`,
@@ -44,6 +45,7 @@ const rawPR = {
     number: 7,
     title: 'PR 7',
     html_url: 'https://github.com/nodejs/node/pull/7',
+    created_at: '2026-10-30T09:00:00Z',
     merged_at: '2026-11-01T10:00:00Z',
     merged: true,
     base: { repo: { full_name: 'nodejs/node' } },
@@ -141,6 +143,30 @@ test('event mapping carries repository, PR, commit SHA, author and merge event',
     const noMerger = detailsFromPR({ ...rawPR, merged_by: null }, NOW);
     assert.equal(noMerger.mergedBy, null);
     assert.equal(attributionFromEvent({ ...event, ...noMerger }).mergedBy, null);
+});
+
+test('indexed PRs keep created_at, so the velocity penalty applies to them', () => {
+    const fromSearch = eventFromSearchItem(searchItem(7), NOW);
+    assert.deepEqual(fromSearch.createdAt, new Date('2026-10-30T09:00:00Z'));
+    assert.equal(detailsFromPR(rawPR, NOW).createdAt.toISOString(), '2026-10-30T09:00:00.000Z');
+
+    const event = { ...fromSearch, ...detailsFromPR(rawPR, NOW) };
+    assert.equal(toPRShape(event).created_at, rawPR.created_at);
+
+    // Two indexed PRs opened 4 minutes apart: same timestamps as the raw PRs
+    const a = toPRShape({ ...event, createdAt: new Date('2026-11-03T10:00:00Z') });
+    const b = toPRShape({ ...event, createdAt: new Date('2026-11-03T10:04:00Z') });
+    const timestamps = [a.created_at, b.created_at];
+    const metrics = extractPRMetrics(b);
+    const penalized = calculatePRScore(metrics, null, { reputation: 100, timestamps });
+    const single = calculatePRScore(metrics, null, { reputation: 100, timestamps: [a.created_at] });
+    assert.equal(penalized.spamPenalty, 0.7273);
+    assert.equal(penalized.isSpamFlagged, true);
+    assert.ok(penalized.score < single.score);
+
+    // An event indexed before createdAt existed still maps cleanly
+    const { createdAt, ...legacy } = event;
+    assert.equal(toPRShape(legacy).created_at, null);
 });
 
 test('toPRShape round-trip is unchanged by attribution fields', () => {
