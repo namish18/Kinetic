@@ -122,7 +122,7 @@ You will also need the following external accounts and credentials:
    | `PORT` | No | Defaults to `5000` |
    | `FRONTEND_URL` | No | Defaults to `http://localhost:3000` |
    | `GITHUB_CALLBACK_URL` | No | Defaults to `http://localhost:5000/api/auth/github/callback` |
-   | `GITHUB_PAT` | No | Raises GitHub API rate limits for contribution scoring |
+   | `GITHUB_PAT` | No | Verifies Proof-of-Build and raises GitHub API rate limits. Without it, new contributions are not scored |
    | `FLOW_ADDRESS` | No | `0x` followed by 16 hexadecimal characters. Needed to read on-chain payouts |
    | `FLOW_CONTRACT_ADDRESS` | No | Defaults to `FLOW_ADDRESS` |
    | `FLOW_PRIVATE_KEY` | No | 64 hexadecimal characters. Without it the server runs but on-chain payout transactions fail |

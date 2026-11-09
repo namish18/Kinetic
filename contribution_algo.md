@@ -24,6 +24,19 @@ Global:
 
 ---
 
+## Proof-of-Build Gate
+
+A merged PR is scored only if GitHub Actions passed on its own commit: its head commit or its merge commit.
+
+* Runs are looked up by commit SHA in the repository the PR was merged into, so a run from another commit or a fork does not count.
+* Only runs the commit triggered count (`push`, `pull_request`, `merge_group`). Scheduled and manual runs do not.
+* A commit passes if at least one of those runs succeeded and the latest run of every workflow finished without failing.
+* A PR that does not pass gets no score and no payout, and does not count toward reputation. It still counts toward the spam penalty.
+
+Repositories that do not use GitHub Actions therefore produce no scores.
+
+---
+
 ## Step 1: Anti-Gaming Filters
 
 ### 1.1 Minimum Quality Threshold
