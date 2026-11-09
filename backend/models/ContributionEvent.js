@@ -26,7 +26,10 @@ const contributionEventSchema = new mongoose.Schema({
     title: { type: String },
     url: { type: String },      // html_url
     apiUrl: { type: String },   // REST API url used to fetch details
-    createdAt: { type: Date },  // PR opened (created_at), used by the velocity penalty
+    // PR opened (created_at), used by the velocity penalty. No default, so an
+    // event whose details predate this field gets them fetched once more;
+    // null means GitHub reported none.
+    createdAt: { type: Date },
     mergedAt: { type: Date },
 
     // Merge event: who merged the PR (from the PR details' merged_by). No
