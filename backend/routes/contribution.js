@@ -5,7 +5,7 @@
  */
 
 import express from 'express';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 import {
     computeContributionScore
 } from '../services/contributionService.js';
@@ -15,23 +15,6 @@ import {
 } from '../middleware/validate.js';
 
 const router = express.Router();
-
-// ─────────────────────────────────────────────────────────────
-//  JWT Middleware
-// ─────────────────────────────────────────────────────────────
-
-function authenticateToken(req, res, next) {
-    const auth = req.headers['authorization'];
-    const token = auth && auth.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Access token required' });
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(403).json({ error: 'Invalid or expired token' });
-    }
-}
 
 /**
  * GET /api/contribution/score/:username
