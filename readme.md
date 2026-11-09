@@ -307,6 +307,8 @@ The backend exposes the following primary endpoints:
 
 Additional routes are available under `/api/contribution`, `/api/kinetic`, `/api/org`, and `/api/webhook` for contribution scoring, kinetic mechanism queries, organization repository management, and GitHub webhook processing, respectively.
 
+**Authentication.** Endpoints marked "JWT required" expect `Authorization: Bearer <token>`. GitHub login issues the token, which is valid for 7 days and is not refreshed, so log in again for a new one. A missing, expired or invalid token gets `401`. A valid token without the required role gets `403`.
+
 ---
 
 ## License

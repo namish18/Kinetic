@@ -1,5 +1,5 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
 import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
@@ -14,18 +14,6 @@ import {
 
 const router = express.Router();
 
-function authenticateToken(req, res, next) {
-    const auth = req.headers['authorization'];
-    const token = auth && auth.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Access token required' });
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(403).json({ error: 'Invalid or expired token' });
-    }
-}
 
 /**
  * GET /api/org/all
