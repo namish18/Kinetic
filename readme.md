@@ -10,7 +10,7 @@
 Traditional bounty systems are "first-come, first-served" or based on simplistic commit counts. This leads to **micro-PR farming**, **code bloat**, and **reputation dominance**, where new, high-quality contributors struggle to compete against established "elites."
 
 ### The Solution - KINETIC
-Kinetic triangulates six independent signal layers using its **MSTS engine** to determine a contributor's final value. It incentivizes **high-leverage engineering**, **cross-repo collaboration**, and **production-grade reliability**.
+Kinetic evaluates five contribution metrics using its **MSTS engine**: impact, complexity, quality, review, and priority. It also applies a reputation multiplier and timestamp-based spam penalty when the required history is available.
 
 
 ---
@@ -25,7 +25,6 @@ Kinetic triangulates six independent signal layers using its **MSTS engine** to 
   - [Flow Blockchain Setup](#flow-blockchain-setup)
 - [Features](#features)
   - [The Contribution Scoring Engine (MSTS v2)](#the-contribution-scoring-engine-msts-v2)
-  - [Proof-of-Build Verification](#1-the-verification-gate-proof-of-build)
   - [Decentralized Identity](#decentralized-identity)
   - [Autonomous FLOW Payouts](#autonomous-flow-payouts)
 
@@ -50,7 +49,6 @@ sequenceDiagram
     participant BC as Flow Blockchain (Cadence)
 
     GH->>KB: PR Merged / Review Submitted
-    KB->>GH: Query GitHub Actions (Proof-of-Build)
     KB->>KB: Calculate MSTS (Multi-Signal Score)
     KB->>DB: Persist Contribution Data
     KB->>BC: Propose Payout (Transaction)
@@ -63,8 +61,6 @@ sequenceDiagram
 | **Frontend** | Next.js 16, React 19, Tailwind CSS 4, GSAP | High-fidelity dashboard for organizations and contributors. |
 | **Backend** | Node.js, Express, MongoDB, Passport (OAuth) | Scoring engine, DID management, and webhook orchestration. |
 | **Blockchain** | Flow Testnet, Cadence, FCL | Secure, transparent treasury management and multi-sig distributions. |
-
-
 ---
 
 ## How to Run the Project
@@ -187,44 +183,43 @@ Refer to the [Flow CLI Documentation](https://developers.flow.com/tools/flow-cli
 
 ### The Contribution Scoring Engine
 
-Kinetic moves beyond "vanity metrics" (like commit counts or lines of code) by employing a multi-staged algorithmic pipeline. This engine ensures that payouts are mathematically proportional to the **actual engineering value** delivered.
+Kinetic moves beyond "vanity metrics" (like commit counts or lines of code) by employing a multi-stage scoring pipeline. The engine evaluates contribution quality and impact, while payout amounts are calculated separately using the resulting PR or organization contributor scores.
 
-#### 1. The Verification Gate: Proof-of-Build
-Before any analysis occurs, every contribution must pass the **Proof-of-Build** gate. Kinetic queries the GitHub Actions API to verify that the specific commit hash successfully passed all CI/CD integration tests.
-> [!IMPORTANT]
-> Merged code without a corresponding successful build trace receives a final score of **zero**.
 
 #### 2. The Algorithmic Pipeline
 
 ```mermaid
 graph TD
-    A[Merged PR] --> B{Proof-of-Build}
-    B -- Fail --> C[Score: 0]
-    B -- Pass --> D[Anti-Gaming Filters]
-    D -- Spam/Low Quality --> C
-    D -- Valid --> E[Base Scoring Engine]
+    A[Merged PR] --> B[Calculate Five PR Metrics]
+    B --> C{Anti-Gaming Filters}
+    C -- Rejected --> D[Score: 0]
+    C -- Accepted --> E[Weighted Base Score]
     E --> F[Reputation Multiplier]
-    F --> G[Post-Adjustment Filters]
-    G --> H[Final Payout Allocation]
+    F --> G[Timestamp-Based Spam Penalty]
+    G --> H[Final PR Score]
 ```
 
 #### 3. Core Scoring Components
 
 | Layer | Component | Description |
 | :--- | :--- | :--- |
-| **Filter** | **Anti-Gaming** | Hard cutoffs for quality (<0.3) and impact (<0.2) to prevent "micro-PR" farming. |
-| **Base** | **Impact & Complexity** | Log-scaled complexity calculation `log(lines + 1) / log(max + 1)` prevents reward for "code bloat". |
-| **Base** | **Review Depth** | Maintainer review scores and comment density; rewards "consensus-building" code. |
-| **Incentive**| **Reputation (1.5x)** | A capped 1.5x multiplier based on historical consistency and "Code Survival Rate". |
-| **Stability**| **Diminishing Returns** | Applies a penalty factor `1 / (1 + 0.1*(k-1))` for high-frequency PR spamming. |
+| **Filter** | **Anti-Gaming** | Rejects PRs with quality below 0.3 or review below 0.3, and PRs where both impact and complexity are below 0.2. |
+| **Base** | **Impact & Complexity** | Impact uses changed files and commit count; complexity uses logarithmic scaling of additions and deletions, capped at 10,000 changed lines. |
+| **Base** | **Review** | Calculated from the number of review comments using `min(1, (review_comments / 10) + 0.5)`. |
+| **Base** | **Quality** | Starts at 0.8; adds 0.1 if deletions exceed additions and 0.1 if the PR is merged, capped at 1.0. |
+| **Base** | **Priority** | Scores 1.0 when a PR label contains priority, high, critical, or urgent; otherwise scores 0.4. |
+| **Incentive** | **Reputation (1.5x cap)** | A multiplier based on accepted PR count, average review score, historical impact, and consistency; normalized logarithmically and capped at 1.5x. |
+| **Stability** | **Spam Penalty** | Applies a timestamp-based penalty using PR submission history; submissions less than 10 minutes apart trigger an additional 20% penalty. |
 
 #### 4. The Math Behind the Meritocracy
 
-The final score for any contribution $i$ is calculated as:
-$$FinalScore_i = \left( \sum w_n \cdot Metric_{ni} \right) \times \left( 1 + \lambda \cdot \log(Reputation_i + 1) \right) \times Penalty_{spam}$$
+The final PR score is calculated as:
 
-This dual-layered approach balances objective PR metrics with long-term ecosystem health.
+$$
+FinalScore = round(BaseScore \times ReputationMultiplier \times SpamPenalty, 4)
+$$
 
+The base score is the weighted sum of five PR metrics: impact, complexity, quality, review, and priority. The reputation multiplier is logarithmically normalized and capped at 1.5. The spam penalty is based on available PR timestamp history; when no timestamp history is supplied, the penalty is 1.0.
 
 ### Decentralized Identity
 
