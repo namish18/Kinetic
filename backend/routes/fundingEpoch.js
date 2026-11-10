@@ -1,6 +1,6 @@
 
 import express from 'express';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 
 import {
     createFundingEpoch,
@@ -15,20 +15,7 @@ import FundingEpochScore from '../models/FundingEpochScore.js';
 
 const router = express.Router();
 
-function authenticate(req, res, next) {
-    const token = req.headers.authorization?.split(' ')[1];
 
-    if (!token) {
-        return res.status(401).json({ message: 'Authentication required' });
-    }
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        return res.status(401).json({ message: 'Invalid or expired token' });
-    }
-}
 
 function handleError(res, error) {
     const message = error.message || 'Internal server error';
@@ -46,7 +33,7 @@ function handleError(res, error) {
     return res.status(status).json({ message });
 }
 
-router.use(authenticate);
+router.use(authenticateToken);
 
 // Create an epoch
 router.post('/', async (req, res) => {

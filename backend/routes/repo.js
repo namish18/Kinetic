@@ -1,9 +1,8 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
-import { computeOrgContributors } from '../services/contributionService.js';
- fix/remove-fallback-wallet-repo
+import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
 
 import {
     validateAddRepository,
@@ -12,28 +11,10 @@ import {
     validateRepoConfig,
     normalizeRepoName
 } from '../middleware/validate.js';
- main
 
 const router = express.Router();
 
-function authenticateToken(req, res, next) {
-    const auth = req.headers['authorization'];
-    const token = auth && auth.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Access token required' });
 
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(403).json({ error: 'Invalid or expired token' });
-    }
-}
-
- fix/remove-fallback-wallet-repo
-
-import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
-
- main
 /**
  * GET /api/org/all
  * Public endpoint to get all repositories across the platform.
@@ -88,24 +69,6 @@ router.get('/info', authenticateToken, async (req, res) => {
 });
 
 /**
- fix/remove-fallback-wallet-repo
- * Normalize a repo identifier to "owner/repo" format.
- * Accepts full GitHub URLs, github.com/owner/repo, or plain owner/repo.
- */
-function normalizeRepoName(input) {
-    let cleaned = input.trim();
-    cleaned = cleaned.replace(/^https?:\/\//i, '');   // remove https:// or http://
-    cleaned = cleaned.replace(/^github\.com\//i, ''); // remove github.com/
-    cleaned = cleaned.replace(/\.git$/i, '');          // remove trailing .git
-    cleaned = cleaned.replace(/\/+$/, '');             // remove trailing slashes
-    const parts = cleaned.split('/').filter(Boolean);
-    if (parts.length < 2) return cleaned; // can't normalize, return as-is
-    return `${parts[0]}/${parts[1]}`;
-}
-
-/**
-
-main
  * POST /api/org/repositories
  */
 router.post('/repositories', authenticateToken, validateAddRepository, async (req, res) => {
@@ -135,11 +98,7 @@ router.post('/repositories', authenticateToken, validateAddRepository, async (re
  */
 router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), async (req, res) => {
     try {
- fix/remove-fallback-wallet-repo
-        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
-
         const repoName = req.normalizedRepoId;
- main
         const pat = process.env.GITHUB_PAT;
 
         const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Kinetic-App' };
@@ -172,11 +131,7 @@ router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdPa
 /**
  * PUT /api/org/repositories/:repoId/branches
  */
-fix/remove-fallback-wallet-repo
-router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
-
 router.put('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), validateUpdateBranches, async (req, res) => {
-main
     try {
         const repoName = req.normalizedRepoId;
         const { targetBranches } = req.body;
@@ -199,10 +154,8 @@ main
  */
 router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdParam('repoId'), validateRepoConfig, async (req, res) => {
     try {
-        const repoName = decodeURIComponent(req.params.repoId);
-        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
         const repoName = req.normalizedRepoId;
-        const { targetBranches, weights, bountyPool } = req.body;
+        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
 
         const user = await User.findById(req.user.id);
         const repo = user.repositories.find(r => r.name === repoName);
@@ -282,8 +235,4 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
     }
 });
 
- fix/remove-fallback-wallet-repo
 export default router;
-
-export default router;
-main

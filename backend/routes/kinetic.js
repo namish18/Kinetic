@@ -1,5 +1,6 @@
 import express from 'express';
-import { calculateSpamPenalty } from '../services/kineticMechanisms.js';
+import { calculateSpamPenalty, verifyProofOfBuild, calculateQuadraticFunding } from '../services/kineticMechanisms.js';
+import { validateProofOfBuild, validateQuadraticFunding } from '../middleware/validate.js';
 
 const router = express.Router();
 
@@ -16,10 +17,7 @@ router.post('/anti-gaming-score', (req, res) => {
     penaltyMultiplier: penalty,
     status: penalty < 0.8 ? 'Velocity Penalty Applied' : 'Normal',
   });
-import { verifyProofOfBuild, calculateQuadraticFunding } from '../services/kineticMechanisms.js';
-import { validateProofOfBuild, validateQuadraticFunding } from '../middleware/validate.js';
-
-const router = express.Router();
+});
 
 /**
  * Endpoint 1: Verify Proof-of-Build (CI/CD trace)

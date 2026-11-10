@@ -7,7 +7,11 @@
 
 import User from '../models/User.js';
 import ContributionEvent from '../models/ContributionEvent.js';
-import { syncIndex, toPRShape } from './contributionIndex.js';
+import {
+    syncIndex,
+    toPRShape,
+    attributionFromEvent
+} from './contributionIndex.js';
 
 /**
  * Sync details reported in a score response's meta.
@@ -190,7 +194,6 @@ export async function getContributorReputation(username, token, customWeights = 
         };
     }
 }
-
 
 // ─────────────────────────────────────────────────────────────
 //  Algorithm Versioning
@@ -392,6 +395,7 @@ export async function computeContributionScore(username, token, options = {}) {
             };
         }
 
+
         const validPRRecords = [];
         const prTimestamps = [];
 
@@ -416,13 +420,15 @@ export async function computeContributionScore(username, token, options = {}) {
 
             const metrics = extractPRMetrics(prData);
 
-            validPRRecords.push({
+                     validPRRecords.push({
                 prData,
+                attribution: attributionFromEvent(event),
                 repoFullName: event.repo,
                 repoConfig,
                 weights,
                 repWeights,
-                metrics
+                metrics,
+                timestampCount: prTimestamps.length
             });
         }
 
@@ -478,13 +484,14 @@ export async function computeContributionScore(username, token, options = {}) {
         const prDetails = [];
 
         // Score and persist each PR using the existing MSTS algorithm.
+                 // Score and persist each PR using the existing MSTS algorithm.
         for (const record of validPRRecords) {
             const result = calculatePRScore(
                 record.metrics,
                 record.weights,
                 {
                     reputation: contributorReputation,
-                    timestamps: prTimestamps
+                    timestamps: prTimestamps.slice(0, record.timestampCount)
                 }
             );
 
@@ -535,7 +542,8 @@ export async function computeContributionScore(username, token, options = {}) {
                 algorithmVersion: ALGORITHM_VERSION,
                 status: 'merged',
                 date: record.prData.merged_at?.split('T')[0] || 'N/A',
-                link: record.prData.html_url
+                link: record.prData.html_url,
+                ...record.attribution
             });
         }
 
@@ -648,28 +656,28 @@ export async function computeOrgContributors(orgId, token) {
         // Group indexed PRs by contributor.
         for (const event of events) {
             const username = event.author;
-
             if (!username) continue;
 
             const prData = toPRShape(event);
             const repoConfig = org.repositories.find(
                 repo => repo.name.toLowerCase() === event.repoKey
             );
-
             if (!repoConfig) continue;
 
+            const repoFullName = event.repo;
             const metrics = extractPRMetrics(prData);
 
             if (!contributorPRMap[username]) {
                 contributorPRMap[username] = {
-                    prs: [],
+                  prs: [],
                     avatar: event.authorAvatar
                 };
             }
 
             contributorPRMap[username].prs.push({
                 prData,
-                repoFullName: event.repo,
+                attribution: attributionFromEvent(event),
+                repoFullName,
                 repoConfig,
                 metrics
             });
@@ -736,7 +744,8 @@ export async function computeOrgContributors(orgId, token) {
                     repo: pr.repoFullName,
                     score: Math.round(prScore * 10) / 10,
                     timestamp: pr.prData.merged_at,
-                    cid: `bafybei${Math.random().toString(16).substring(2, 10)}`
+                    cid: `bafybei${Math.random().toString(16).substring(2, 10)}`,
+                    ...pr.attribution
                 });
             }
         }
