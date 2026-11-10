@@ -77,6 +77,7 @@ export function eventFromSearchItem(item, now = new Date()) {
 export function detailsFromPR(pr, now = new Date()) {
     return {
         ...(pr.base?.repo?.full_name && { repo: pr.base.repo.full_name }),
+        mergedBy: pr.merged_by ? { login: pr.merged_by.login, id: pr.merged_by.id } : null,
         mergeCommitSha: pr.merge_commit_sha || null,
         headSha: pr.head?.sha || null,
         stats: {
@@ -116,12 +117,38 @@ export function toPRShape(event) {
 }
 
 /**
- * True when an event in a registered repo has no details yet, or was merged
+ * Commit-level attribution of an indexed contribution: repository, pull
+ * request, commit SHA (the merge commit), head SHA, author and merge event.
+ */
+export function attributionFromEvent(event) {
+    return {
+        repo: event.repo,
+        prNumber: event.prNumber ?? null,
+        commitSha: event.mergeCommitSha || null,
+        headSha: event.headSha || null,
+        author: event.author,
+        authorId: event.authorId ?? null,
+        mergedAt: event.mergedAt ? isoSeconds(event.mergedAt) : null,
+        mergedBy: event.mergedBy ? { login: event.mergedBy.login, id: event.mergedBy.id ?? null } : null
+    };
+}
+
+/**
+ * True when details were fetched before merge attribution was stored, i.e.
+ * the event has no mergedBy field at all (detailsFromPR always sets it).
+ */
+export function missingAttribution(event) {
+    return Boolean(event.detailsFetchedAt) && event.mergedBy === undefined;
+}
+
+/**
+ * True when an event in a registered repo has no details yet, has details
+ * without merge attribution (fetched once more to backfill it), or was merged
  * within the refresh window and its details are older than the minimum age.
  */
 export function needsDetails(event, registeredKeys, now = new Date()) {
     if (!registeredKeys.has(event.repoKey)) return false;
-    if (!event.detailsFetchedAt) return true;
+    if (!event.detailsFetchedAt || missingAttribution(event)) return true;
     const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
     const detailsOld = new Date(event.detailsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
     return recentlyMerged && detailsOld;
@@ -290,7 +317,7 @@ export async function syncIndex({
     if (meta.errors.length === 0) {
         const indexed = await Event
             .find({ ...detailFilter, repoKey: { $in: [...registeredKeys] } })
-            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt')
+            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt mergedBy')
             .lean();
         const targets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
 

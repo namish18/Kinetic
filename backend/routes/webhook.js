@@ -50,6 +50,8 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
         return res.status(200).send('Merged to untracked branch');
       }
 
+      console.log(`Webhook: Target branch matched! Calculating payout algorithm using org weights...`);
+
             // Calculate payout based on true PR dimensions
             const prMetrics = extractPRMetrics(payload.pull_request);
             
@@ -107,47 +109,6 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
             } else {
                 console.log(`Webhook: Skipped execution (Tokens <= 0 or Contributor wallet not linked).`);
             }
-      console.log(`Webhook: Target branch matched! Calculating payout algorithm using org weights...`);
-
-      // Calculate payout based on true PR dimensions
-      const prMetrics = extractPRMetrics(payload.pull_request);
-      
-      // Execute algorithm from contribution_algo.md
-      const result = calculatePRScore(prMetrics, repoConfig.weights, { 
-        reputation: 100 // TODO: fetch real contributor reputation from DB
-      });
-
-      // Scale score to display range
-      const finalScore = result.score ? Math.round(result.score * 100) : 0;
-      
-      // Payout calculation parameters
-      const FLOW_PER_POINT = 0.1;
-      const MAX_FLOW_PER_PR = 10.0;
-      const estPayoutFlow = Math.min(MAX_FLOW_PER_PR, Math.round(result.score * FLOW_PER_POINT * 1000) / 1000);
-      
-      console.log(`Webhook: Payout calculated for ${contributorUsername} -> Score: ${finalScore}, Est payout: ${estPayoutFlow} FLOW\n`);
-
-      let flowTxStatus = "skipped";
-      let flowTxId = null;
-
-      // Retrieve the contributor's wallet
-      const contributorUser = await User.findOne({ github: contributorUsername });
-      
-      if (estPayoutFlow > 0 && contributorUser?.wallet) {
-        console.log(`Webhook: Proposing smart contract payout to contributor's wallet ${contributorUser.wallet}...`);
-        const txResult = await proposePayout(contributorUser.wallet, estPayoutFlow);
-        
-        if (txResult.success) {
-          flowTxStatus = "success";
-          flowTxId = txResult.transactionId;
-          console.log(`Webhook: Successfully proposed transaction (ID: ${flowTxId})`);
-        } else {
-          flowTxStatus = "failed";
-          console.log(`Webhook: Failed to execute Flow transaction:`, txResult.error);
-        }
-      } else {
-        console.log(`Webhook: Skipped execution (Tokens <= 0 or Contributor wallet not linked).`);
-      }
 
       return res.status(200).json({ 
         success: true, 
