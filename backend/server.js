@@ -1,3 +1,6 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fundingEpochRoutes from './routes/fundingEpoch.js';
 import 'dotenv/config';
 
 import express from 'express';
@@ -19,7 +22,8 @@ import { stopHelia } from './services/didService.js';
 import { ensureAlgorithmVersion } from './services/contributionService.js';
 
 // (env vars loaded via import 'dotenv/config' at top)
-
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 connectDB();
 
 // Seed the active scoring algorithm version
@@ -55,7 +59,7 @@ app.use(
 
 app.use(passport.initialize());
 app.use(passport.session());
-
+app.use('/api/org/funding-epochs', fundingEpochRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/contribution', contributionRoutes);
 app.use('/api/kinetic', kineticRoutes);
@@ -66,6 +70,7 @@ app.use('/api/webhook', webhookRoutes);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Kinetic Backend is healthy' });
+});
 // ─── Static frontend ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
@@ -102,5 +107,12 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 export default app;
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => {
+  stopHelia();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  stopHelia();
+  process.exit(0);
+});
