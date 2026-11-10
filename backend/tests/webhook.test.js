@@ -1,30 +1,32 @@
-import { jest } from '@jest/globals';
+﻿import { mock, describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import request from 'supertest';
 
-// Mock Helia native WebRTC binary modules before importing app
-jest.unstable_mockModule('helia', () => ({
-  createHelia: jest.fn().mockResolvedValue({}),
-}));
+const secret = 'test_webhook_secret_key';
 
-jest.unstable_mockModule('@helia/json', () => ({
-  json: jest.fn().mockReturnValue({}),
-}));
+process.env.GITHUB_WEBHOOK_SECRET = secret;
 
-const request = (await import('supertest')).default;
-const crypto = (await import('crypto')).default;
+mock.module('helia', {
+  namedExports: {
+    createHelia: async () => ({})
+  }
+});
+
+mock.module('@helia/json', {
+  namedExports: {
+    json: () => ({})
+  }
+});
+
 const app = (await import('../server.js')).default;
 
+const generateSignature = (payload, customSecret = secret) => {
+  const hmac = crypto.createHmac('sha256', customSecret);
+  return `sha256=${hmac.update(JSON.stringify(payload)).digest('hex')}`;
+};
+
 describe('SEC-01: GitHub Webhook Signature Verification', () => {
-  const secret = 'test_webhook_secret_key';
-
-  beforeAll(() => {
-    process.env.GITHUB_WEBHOOK_SECRET = secret;
-  });
-
-  const generateSignature = (payload, customSecret = secret) => {
-    const hmac = crypto.createHmac('sha256', customSecret);
-    return `sha256=${hmac.update(JSON.stringify(payload)).digest('hex')}`;
-  };
-
   test('Valid signature -> 200 OK', async () => {
     const payload = { action: 'opened' };
     const signature = generateSignature(payload);
@@ -35,17 +37,17 @@ describe('SEC-01: GitHub Webhook Signature Verification', () => {
       .set('X-GitHub-Event', 'issues')
       .send(payload);
 
-    expect(res.status).toBe(200);
+    assert.equal(res.status, 200);
   });
 
-  test('Missing X-Hub-Signature-256 header -> 401 Unauthorized', async () => {
+  test('Missing signature -> 401 Unauthorized', async () => {
     const res = await request(app)
       .post('/api/webhook/github')
       .set('X-GitHub-Event', 'pull_request')
       .send({ action: 'opened' });
 
-    expect(res.status).toBe(401);
-    expect(res.body.error).toBe('Missing X-Hub-Signature-256 header.');
+    assert.equal(res.status, 401);
+    assert.equal(res.body.error, 'Missing X-Hub-Signature-256 header.');
   });
 
   test('Invalid signature -> 401 Unauthorized', async () => {
@@ -57,7 +59,7 @@ describe('SEC-01: GitHub Webhook Signature Verification', () => {
       .set('X-GitHub-Event', 'pull_request')
       .send({ action: 'opened' });
 
-    expect(res.status).toBe(401);
-    expect(res.body.error).toBe('Invalid webhook signature.');
+    assert.equal(res.status, 401);
+    assert.equal(res.body.error, 'Invalid webhook signature.');
   });
 });
