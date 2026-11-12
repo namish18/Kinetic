@@ -2,7 +2,16 @@ import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
+ feature/payout-idempotency-epoch
+import { computeOrgContributors } from '../services/contributionService.js';
+ feature/payout-idempotency-epoch
+import Payout from '../models/Payout.js';
+
+
+ fix/remove-fallback-wallet-repo
+
 import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
+main
 
 import {
     validateAddRepository,
@@ -11,6 +20,11 @@ import {
     validateRepoConfig,
     normalizeRepoName
 } from '../middleware/validate.js';
+feature/payout-idempotency-epoch
+ main
+ main
+
+main
 
 const router = express.Router();
 
@@ -123,6 +137,89 @@ router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdPa
         }
 
         res.json({ success: true, branches: allBranches });
+    } catch (error) {
+        res.status(500).json({ error: 'Server error', message: error.message });
+    }
+});
+/**
+ * POST /api/org/payout/execute
+ * Propose payouts with idempotency guard per contribution and epoch
+ */
+router.post('/payout/execute', authenticateToken, async (req, res) => {
+    try {
+        const { epochId = 'epoch-default' } = req.body;
+        const { contributors } = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
+
+        if (!contributors || contributors.length === 0) {
+            return res.status(400).json({ error: 'No contributors found to payout.' });
+        }
+
+        const results = [];
+
+        for (const c of contributors) {
+            const amount = c.totalScore * 5;
+            if (amount <= 0) continue;
+
+            // Generate unique contribution key
+            const contributionId = `${c.username}_${c.totalScore}`;
+
+            // Idempotency check: check for existing payout execution
+            const existingPayout = await Payout.findOne({ contributionId, epochId });
+            if (existingPayout) {
+                console.log(`Repo Payout: Idempotency triggered for ${c.username} (${contributionId}) in epoch ${epochId}`);
+                results.push({
+                    username: c.username,
+                    amount: existingPayout.amount,
+                    status: 'already_processed',
+                    message: 'Payout already processed for this contribution and epoch.',
+                    txResult: existingPayout.txResult
+                });
+                continue;
+            }
+
+            const userDoc = await User.findOne({ github: c.username });
+
+            if (!userDoc?.wallet) {
+                const pendingRecord = await Payout.create({
+                    contributionId,
+                    epochId,
+                    username: c.username,
+                    wallet: 'unlinked',
+                    amount,
+                    status: 'pending_wallet'
+                });
+                results.push({
+                    username: c.username,
+                    amount,
+                    status: 'pending_wallet',
+                    message: 'Contributor wallet is not linked. Payout marked as pending.'
+                });
+                continue;
+            }
+
+            // Propose transaction on Flow blockchain
+            const txResult = await proposePayout(userDoc.wallet, amount);
+            const payoutStatus = txResult.success ? 'success' : 'failed';
+
+            await Payout.create({
+                contributionId,
+                epochId,
+                username: c.username,
+                wallet: userDoc.wallet,
+                amount,
+                status: payoutStatus,
+                txResult
+            });
+
+            results.push({
+                username: c.username,
+                amount,
+                status: payoutStatus,
+                txResult
+            });
+        }
+
+        res.json({ success: true, results });
     } catch (error) {
         res.status(500).json({ error: 'Server error', message: error.message });
     }
