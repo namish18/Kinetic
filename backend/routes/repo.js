@@ -1,9 +1,9 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
+import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
-import { computeOrgContributors } from '../services/contributionService.js';
+import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
+
 import {
     validateAddRepository,
     validateRepoIdParam,
@@ -14,20 +14,6 @@ import {
 
 const router = express.Router();
 
-function authenticateToken(req, res, next) {
-    const auth = req.headers['authorization'];
-    const token = auth && auth.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Access token required' });
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(403).json({ error: 'Invalid or expired token' });
-    }
-}
-
-import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
 
 /**
  * GET /api/org/all
@@ -168,10 +154,8 @@ router.put('/repositories/:repoId/branches', authenticateToken, validateRepoIdPa
  */
 router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdParam('repoId'), validateRepoConfig, async (req, res) => {
     try {
-        const repoName = decodeURIComponent(req.params.repoId);
-        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
         const repoName = req.normalizedRepoId;
-        const { targetBranches, weights, bountyPool } = req.body;
+        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
 
         const user = await User.findById(req.user.id);
         const repo = user.repositories.find(r => r.name === repoName);
@@ -216,7 +200,6 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'No contributors found to payout.' });
         }
 
-        const fallbackWallet = process.env.FLOW_ADDRESS || "0x01cf0e2f2f715450";
         const results = [];
         
         for (const c of contributors) {
@@ -224,10 +207,26 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
             if (amount <= 0) continue;
 
             const userDoc = await User.findOne({ github: c.username });
-            const wallet = userDoc?.wallet || fallbackWallet;
 
-            const txResult = await proposePayout(wallet, amount);
-            results.push({ username: c.username, amount, txResult });
+            // If wallet is missing, mark as pending without triggering smart contract execution
+            if (!userDoc?.wallet) {
+                console.log(`Repo Payout: Contributor ${c.username} has no linked wallet. Setting status to pending.`);
+                results.push({ 
+                    username: c.username, 
+                    amount, 
+                    status: 'pending_wallet',
+                    message: 'Contributor wallet is not linked. Payout marked as pending.'
+                });
+                continue;
+            }
+
+            const txResult = await proposePayout(userDoc.wallet, amount);
+            results.push({ 
+                username: c.username, 
+                amount, 
+                status: txResult.success ? 'success' : 'failed',
+                txResult 
+            });
         }
 
         res.json({ success: true, results });

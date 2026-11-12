@@ -11,7 +11,11 @@ import ContributionEvent from '../models/ContributionEvent.js';
 import AlgorithmVersion from '../models/AlgorithmVersion.js';
 import ContributionScore from '../models/ContributionScore.js';
 
-import { syncIndex, toPRShape } from './contributionIndex.js';
+import {
+    syncIndex,
+    toPRShape,
+    attributionFromEvent
+} from './contributionIndex.js';
 
 import {
     createContributionEvidence
@@ -782,7 +786,9 @@ export async function computeContributionScore(
 
                 error:
                     sync.errors?.[0] ||
-                    'Contribution index could not be refreshed.',
+                    (sync.rateLimited
+                        ? 'GitHub API rate limit exceeded.'
+                        : 'Contribution index could not be refreshed.'),
 
                 algorithmVersion: ALGORITHM_VERSION,
 
@@ -824,6 +830,7 @@ export async function computeContributionScore(
 
             validPRRecords.push({
                 prData,
+                attribution: attributionFromEvent(event),
                 repoFullName,
                 repoConfig,
 
@@ -835,8 +842,9 @@ export async function computeContributionScore(
                     repoConfig.reputationWeights ||
                     user?.reputationWeights,
 
-                metrics:
-                    extractPRMetrics(prData)
+                metrics: extractPRMetrics(prData),
+
+                timestampCount: prTimestamps.length
             });
         }
 
@@ -931,13 +939,12 @@ export async function computeContributionScore(
         // ─────────────────────────────────────────────
 
         for (const record of validPRRecords) {
-
             // Step 1: Prepare scoring inputs.
 
             const scoringInputs = {
                 metrics: record.metrics,
                 reputation: contributorReputation,
-                timestamps: prTimestamps
+                timestamps: prTimestamps.slice(0, record.timestampCount)
             };
 
             // Step 2: Resolve effective weights.
@@ -1077,7 +1084,9 @@ export async function computeContributionScore(
                     record.prData.merged_at?.split('T')[0] ||
                     'N/A',
 
-                link: record.prData.html_url
+                link: record.prData.html_url,
+
+                ...record.attribution
             });
         }
 
@@ -1255,21 +1264,19 @@ export async function computeOrgContributors(
             };
         }
 
-        const contributorPRMap = {};
-
         // Group indexed PRs by contributor.
-
+        const contributorPRMap = {};
         for (const event of events) {
 
             const prData = toPRShape(event);
 
             const username = event.author;
-
             if (!username) continue;
 
             const repoFullName =
                 prData.base?.repo?.full_name ||
-                event.repoFullName;
+                event.repoFullName ||
+                event.repo;
 
             if (!repoFullName) continue;
 
@@ -1279,6 +1286,8 @@ export async function computeOrgContributors(
                     repoFullName.toLowerCase()
             );
 
+            // Ignore events for repositories no longer tracked by the organization.
+            if (!repoConfig) continue;
             const metrics = extractPRMetrics(prData);
 
             if (!contributorPRMap[username]) {
@@ -1295,6 +1304,7 @@ export async function computeOrgContributors(
 
             contributorPRMap[username].prs.push({
                 prData,
+                attribution: attributionFromEvent(event),
                 repoFullName,
                 repoConfig,
                 metrics,
@@ -1407,13 +1417,14 @@ export async function computeOrgContributors(
                     repo: prItem.repoFullName,
 
                     score: Math.round(prScore * 10) / 10,
-
                     timestamp:
                         prItem.prData.merged_at ||
-                        prItem.event.mergedAt ||
+                        prItem.event?.mergedAt ||
                         null,
 
-                    algorithmVersion: ALGORITHM_VERSION
+                    algorithmVersion: ALGORITHM_VERSION,
+
+                    ...prItem.attribution
                 });
             }
         }

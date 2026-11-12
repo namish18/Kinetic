@@ -1,13 +1,12 @@
-
 /**
  * Contribution Scoring API Routes
  *
- * Provides endpoints to compute and retrieve Contribution scores
+ * Provides endpoints to compute and retrieve contribution scores
  * for GitHub users.
  */
 
 import express from 'express';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 
 import {
     computeContributionScore
@@ -20,59 +19,18 @@ import {
 
 const router = express.Router();
 
-// ─────────────────────────────────────────────────────────────
-// JWT Authentication Middleware
-// ─────────────────────────────────────────────────────────────
-
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({
-            success: false,
-            error: 'Access token required'
-        });
-    }
-
-    const token = authHeader.split(' ')[1];
-
-    if (!token) {
-        return res.status(401).json({
-            success: false,
-            error: 'Access token required'
-        });
-    }
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch (error) {
-        return res.status(403).json({
-            success: false,
-            error: 'Invalid or expired token'
-        });
-    }
-}
-
-// ─────────────────────────────────────────────────────────────
 // GET /api/contribution/score/:username
-// Compute contribution score for any GitHub user.
-// Public endpoint.
-// ─────────────────────────────────────────────────────────────
-
+// Public endpoint: compute the contribution score for any GitHub user.
 router.get(
     '/score/:username',
     validateGithubUsernameParam('username'),
     async (req, res) => {
         try {
             const { username } = req.params;
-
             const githubToken =
                 req.query.token || process.env.GITHUB_PAT || null;
 
-            console.log(
-                `\nComputing Contribution Score for @${username}...`
-            );
+            console.log(`\nComputing Contribution Score for @${username}...`);
 
             const result = await computeContributionScore(
                 username,
@@ -80,15 +38,12 @@ router.get(
                 { startTime: Date.now() }
             );
 
-            console.log(
-                `Score for @${username}: ${result.finalScore}`
-            );
+            console.log(`Score for @${username}: ${result.finalScore}`);
 
             return res.status(200).json({
                 success: true,
                 ...result
             });
-
         } catch (error) {
             console.error(
                 `Score computation failed for @${req.params.username}:`,
@@ -104,12 +59,8 @@ router.get(
     }
 );
 
-// ─────────────────────────────────────────────────────────────
 // GET /api/contribution/me
-// Compute contribution score for authenticated user.
 // JWT authentication required.
-// ─────────────────────────────────────────────────────────────
-
 router.get('/me', authenticateToken, async (req, res) => {
     try {
         const username = req.user.github;
@@ -137,7 +88,6 @@ router.get('/me', authenticateToken, async (req, res) => {
             success: true,
             ...result
         });
-
     } catch (error) {
         console.error(
             'Contribution score computation failed:',
@@ -152,16 +102,11 @@ router.get('/me', authenticateToken, async (req, res) => {
     }
 });
 
-// ─────────────────────────────────────────────────────────────
 // GET /api/contribution/compare?users=user1,user2
-// Compare contribution scores across multiple users.
-// Maximum 5 users.
-// ─────────────────────────────────────────────────────────────
-
+// Compare up to five users.
 router.get('/compare', validateCompareUsers, async (req, res) => {
     try {
         const usernames = req.validatedUsers;
-
         const githubToken =
             req.query.token || process.env.GITHUB_PAT || null;
 
@@ -198,7 +143,6 @@ router.get('/compare', validateCompareUsers, async (req, res) => {
             comparison,
             rankedBy: 'finalScore'
         });
-
     } catch (error) {
         console.error(
             'Contribution comparison failed:',
