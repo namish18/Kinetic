@@ -12,7 +12,7 @@ import {
     toPRShape,
     upsertEvents
 } from '../services/contributionIndex.js';
-import { extractPRMetrics } from '../services/contributionService.js';
+import { extractPRMetrics, calculatePRScore } from '../services/contributionService.js';
 
 const realFetch = globalThis.fetch;
 afterEach(() => {
@@ -29,9 +29,10 @@ function jsonResponse(body, { status = 200, headers = {} } = {}) {
     });
 }
 
-function searchItem(n, { repo = 'nodejs/node', login = 'alice', mergedAt = '2026-11-01T10:00:00Z' } = {}) {
+function searchItem(n, { repo = 'nodejs/node', login = 'alice', mergedAt = '2026-11-01T10:00:00Z', createdAt = '2026-10-30T09:00:00Z' } = {}) {
     return {
         number: n,
+        created_at: createdAt,
         title: `PR ${n}`,
         html_url: `https://github.com/${repo}/pull/${n}`,
         repository_url: `https://api.github.com/repos/${repo}`,
@@ -44,6 +45,7 @@ const rawPR = {
     number: 7,
     title: 'PR 7',
     html_url: 'https://github.com/nodejs/node/pull/7',
+    created_at: '2026-10-30T09:00:00Z',
     merged_at: '2026-11-01T10:00:00Z',
     merged: true,
     base: { repo: { full_name: 'nodejs/node' } },
@@ -106,8 +108,8 @@ test('an indexed event scores exactly like the raw GitHub PR', () => {
 
 test('needsDetails: missing details, recent refresh window at most once a day, registered repos only', () => {
     const registered = new Set(['nodejs/node']);
-    // Details fetched after attribution was added always carry mergedBy
-    const base = { repoKey: 'nodejs/node', mergedBy: { login: 'bob', id: 2 } };
+    // Details fetched after attribution and createdAt were added always carry both
+    const base = { repoKey: 'nodejs/node', mergedBy: { login: 'bob', id: 2 }, createdAt: new Date('2026-10-30T09:00:00Z') };
     const recent = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS - 1) * DAY);
     const old = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS + 1) * DAY);
     const HOUR = 60 * 60 * 1000;
@@ -143,6 +145,30 @@ test('event mapping carries repository, PR, commit SHA, author and merge event',
     assert.equal(attributionFromEvent({ ...event, ...noMerger }).mergedBy, null);
 });
 
+test('indexed PRs keep created_at, so the velocity penalty applies to them', () => {
+    const fromSearch = eventFromSearchItem(searchItem(7), NOW);
+    assert.deepEqual(fromSearch.createdAt, new Date('2026-10-30T09:00:00Z'));
+    assert.equal(detailsFromPR(rawPR, NOW).createdAt.toISOString(), '2026-10-30T09:00:00.000Z');
+
+    const event = { ...fromSearch, ...detailsFromPR(rawPR, NOW) };
+    assert.equal(toPRShape(event).created_at, rawPR.created_at);
+
+    // Two indexed PRs opened 4 minutes apart: same timestamps as the raw PRs
+    const a = toPRShape({ ...event, createdAt: new Date('2026-11-03T10:00:00Z') });
+    const b = toPRShape({ ...event, createdAt: new Date('2026-11-03T10:04:00Z') });
+    const timestamps = [a.created_at, b.created_at];
+    const metrics = extractPRMetrics(b);
+    const penalized = calculatePRScore(metrics, null, { reputation: 100, timestamps });
+    const single = calculatePRScore(metrics, null, { reputation: 100, timestamps: [a.created_at] });
+    assert.equal(penalized.spamPenalty, 0.7273);
+    assert.equal(penalized.isSpamFlagged, true);
+    assert.ok(penalized.score < single.score);
+
+    // An event indexed before createdAt existed still maps cleanly
+    const { createdAt, ...legacy } = event;
+    assert.equal(toPRShape(legacy).created_at, null);
+});
+
 test('toPRShape round-trip is unchanged by attribution fields', () => {
     const event = { ...eventFromSearchItem(searchItem(7), NOW), ...detailsFromPR(rawPR, NOW) };
     const { mergedBy, mergeCommitSha, headSha, ...withoutAttribution } = event;
@@ -157,7 +183,7 @@ test('needsDetails: details fetched before attribution existed are fetched once 
     const old = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS + 1) * DAY);
     const recent = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS - 1) * DAY);
     const fetchedRecently = new Date(NOW.getTime() - (DETAIL_REFRESH_MIN_AGE_HOURS - 1) * HOUR);
-    const legacy = { repoKey: 'nodejs/node', detailsFetchedAt: new Date('2026-10-01T00:00:00Z'), mergedAt: old, mergeCommitSha: 'def' };
+    const legacy = { repoKey: 'nodejs/node', detailsFetchedAt: new Date('2026-10-01T00:00:00Z'), mergedAt: old, mergeCommitSha: 'def', createdAt: new Date('2026-09-30T00:00:00Z') };
 
     // Old PR whose details predate mergedBy: backfilled
     assert.equal(needsDetails(legacy, registered, NOW), true);
@@ -168,6 +194,59 @@ test('needsDetails: details fetched before attribution existed are fetched once 
     assert.equal(needsDetails({ ...legacy, mergedAt: recent, detailsFetchedAt: fetchedRecently, mergedBy: null }, registered, NOW), false);
     // Unregistered repos are never fetched
     assert.equal(needsDetails({ ...legacy, repoKey: 'other/repo' }, registered, NOW), false);
+});
+
+test('needsDetails: details fetched before createdAt was stored are fetched once more', () => {
+    const registered = new Set(['nodejs/node']);
+    const HOUR = 60 * 60 * 1000;
+    const old = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS + 1) * DAY);
+    const recent = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS - 1) * DAY);
+    const fetchedRecently = new Date(NOW.getTime() - (DETAIL_REFRESH_MIN_AGE_HOURS - 1) * HOUR);
+    // Indexed by an earlier version: details and mergedBy, but no createdAt field
+    const legacy = { repoKey: 'nodejs/node', detailsFetchedAt: new Date('2026-10-01T00:00:00Z'), mergedAt: old, mergedBy: { login: 'bob', id: 2 } };
+
+    // Older than the 14-day refresh window, so only the backfill reaches it
+    assert.equal(needsDetails(legacy, registered, NOW), true);
+    assert.equal(needsDetails({ ...legacy, mergedAt: recent, detailsFetchedAt: fetchedRecently }, registered, NOW), true);
+    // After the backfill (createdAt set, or null when GitHub has none) it is done
+    assert.equal(needsDetails({ ...legacy, createdAt: new Date('2026-09-30T00:00:00Z') }, registered, NOW), false);
+    assert.equal(needsDetails({ ...legacy, createdAt: null }, registered, NOW), false);
+    // Backfilled recent PRs still follow the 24h / 14-day refresh rule
+    assert.equal(needsDetails({ ...legacy, mergedAt: recent, detailsFetchedAt: fetchedRecently, createdAt: null }, registered, NOW), false);
+    // Events without details are fetched anyway; unregistered repos never are
+    assert.equal(needsDetails({ ...legacy, detailsFetchedAt: null }, registered, NOW), true);
+    assert.equal(needsDetails({ ...legacy, repoKey: 'other/repo' }, registered, NOW), false);
+
+    // detailsFromPR always writes createdAt, so each event backfills exactly once
+    assert.equal(detailsFromPR({ ...rawPR, created_at: null }, NOW).createdAt, null);
+    assert.equal(detailsFromPR(rawPR, NOW).createdAt.toISOString(), '2026-10-30T09:00:00.000Z');
+});
+
+test('syncIndex: backfills createdAt for PRs indexed before it was stored', async () => {
+    const { Event, SyncState, calls } = fakeModels({
+        cursors: [{ scope: 'author:alice', lastMergedAt: new Date('2026-11-06T00:00:00Z') }],
+        events: [{
+            repoKey: 'nodejs/node', prNumber: 7, apiUrl: 'https://api.github.com/repos/nodejs/node/pulls/7',
+            mergedAt: new Date('2026-09-01T10:00:00Z'), detailsFetchedAt: new Date('2026-09-02T00:00:00Z'),
+            mergeCommitSha: 'def', mergedBy: { login: 'bob', id: 2 }
+        }]
+    });
+    globalThis.fetch = async (url) => {
+        if (String(url).includes('/search/issues')) return jsonResponse({ total_count: 0, items: [] });
+        return jsonResponse(rawPR);
+    };
+
+    const meta = await syncIndex({
+        scopes: [{ key: 'author:alice', qualifier: 'author:alice' }],
+        detailFilter: { authorKey: 'alice' },
+        registeredKeys: new Set(['nodejs/node']),
+        headers: {},
+        Event, SyncState, now: NOW
+    });
+
+    assert.equal(meta.detailRequests, 1);
+    const detailWrite = calls.eventWrites.find(ops => !ops[0].updateOne.upsert);
+    assert.equal(detailWrite[0].updateOne.update.$set.createdAt.toISOString(), '2026-10-30T09:00:00.000Z');
 });
 
 test('syncIndex: backfills merge attribution for an index created before it existed', async () => {
