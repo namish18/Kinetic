@@ -1,3 +1,7 @@
+﻿import {
+    SCORING_WEIGHT_KEYS,
+    validateScoringWeights
+} from '../config/scoringWeights.js';
 /**
  * API Input Validation Middleware and Helpers
  *
@@ -16,7 +20,7 @@ const GITHUB_REPO_NAME_REGEX = /^[a-zA-Z0-9_.-]{1,100}$/;
 const FLOW_ADDRESS_REGEX = /^0x[0-9a-fA-F]{16}$/;
 
 // Allowed keys for repository scoring weights
-const ALLOWED_WEIGHT_KEYS = ['impact', 'complexity', 'quality', 'review', 'priority'];
+const ALLOWED_WEIGHT_KEYS = SCORING_WEIGHT_KEYS;
 
 /**
  * Standardized validation error response.
@@ -134,9 +138,9 @@ export function isValidAmount(amount, { allowZero = false } = {}) {
     return allowZero ? amount >= 0 : amount > 0;
 }
 
-// ─────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Express Middleware
-// ─────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Middleware: Validates a GitHub username in req.params.
@@ -437,6 +441,29 @@ export function validateRepoConfig(req, res, next) {
         }
     }
 
+    // Validate the sum when all five weights are supplied.
+    // Partial updates are validated after merging in the route.
+    if (
+        weights !== undefined &&
+        typeof weights === 'object' &&
+        weights !== null &&
+        !Array.isArray(weights)
+    ) {
+        const suppliedWeightKeys = Object.keys(weights);
+        const isCompleteConfiguration =
+            suppliedWeightKeys.length === SCORING_WEIGHT_KEYS.length &&
+            SCORING_WEIGHT_KEYS.every(key =>
+                Object.prototype.hasOwnProperty.call(weights, key)
+            );
+
+        if (
+            isCompleteConfiguration &&
+            SCORING_WEIGHT_KEYS.every(key => isValidWeightValue(weights[key]))
+        ) {
+            const result = validateScoringWeights(weights);
+            if (!result.valid) errors.push(...result.errors);
+        }
+    }
     // Validate bountyPool if provided
     if (bountyPool !== undefined) {
         if (!isValidAmount(bountyPool, { allowZero: true })) {
