@@ -7,7 +7,7 @@
 
 import User from '../models/User.js';
 import ContributionEvent from '../models/ContributionEvent.js';
-import { syncIndex, toPRShape } from './contributionIndex.js';
+import { syncIndex, toPRShape, attributionFromEvent } from './contributionIndex.js';
 
 /**
  * Sync details reported in a score response's meta.
@@ -188,6 +188,8 @@ export async function getContributorReputation(username, token, customWeights = 
             weights: { ...DEFAULT_REPUTATION_WEIGHTS, ...customWeights }
         };
     }
+}
+
 // ─────────────────────────────────────────────────────────────
 //  Algorithm Versioning
 // ─────────────────────────────────────────────────────────────
@@ -367,30 +369,9 @@ export async function computeContributionScore(username, token, options = {}) {
                 error: sync.errors[0] || 'GitHub API rate limit exceeded',
                 meta: { prCount: 0, source: 'index', ...indexMeta(sync) }
             };
-        // Fetch merged PRs using GitHub search API
-        const searchQuery = `author:${username} is:pr is:merged updated:>2024-01-01`;
-        const searchRes = await fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(searchQuery)}&per_page=15`, { headers });
-        const searchData = await searchRes.json();
-        
-        if (!searchData.items || searchData.items.length === 0) {
-            return {
-                username,
-                finalScore: 0,
-                reputation: 0,
-                prs: [],
-                meta: {
-                    computeTimeMs: Date.now() - (options.startTime || Date.now()),
-                    prCount: 0
-                }
-            };
         }
 
         const validPRRecords = [];
-            return { username, finalScore: 0, algorithmVersion: ALGORITHM_VERSION, prs: [], meta: { prCount: 0 } };
-        }
-
-        let totalPoints = 0;
-        const prDetails = [];
         const prTimestamps = [];
 
         for (const event of events) {
@@ -410,13 +391,14 @@ export async function computeContributionScore(username, token, options = {}) {
 
             const metrics = extractPRMetrics(prData);
             validPRRecords.push({
-                item,
                 prData,
+                attribution: attributionFromEvent(event),
                 repoFullName,
                 repoConfig,
                 weights,
                 repWeights,
-                metrics
+                metrics,
+                timestampCount: prTimestamps.length
             });
         }
 
@@ -454,10 +436,10 @@ export async function computeContributionScore(username, token, options = {}) {
 
         for (const record of validPRRecords) {
             // Integrate historical reputation into PR scoring
-            const result = calculatePRScore(record.metrics, record.weights, { reputation: contributorReputation });
-            const result = calculatePRScore(metrics, weights, { 
-                reputation: userRepos.length * 10,
-                timestamps: prTimestamps 
+            const { prData, repoFullName, repoConfig, weights } = record;
+            const result = calculatePRScore(record.metrics, weights, {
+                reputation: contributorReputation,
+                timestamps: prTimestamps.slice(0, record.timestampCount)
             });
 
             const prPoints = Math.round(result.score * 20 * 10) / 10;
@@ -499,7 +481,8 @@ export async function computeContributionScore(username, token, options = {}) {
                 algorithmVersion: ALGORITHM_VERSION,
                 status: 'merged',
                 date: record.prData.merged_at?.split('T')[0] || 'N/A',
-                link: record.prData.html_url
+                link: record.prData.html_url,
+                ...record.attribution
             });
         }
 
@@ -572,40 +555,25 @@ export async function computeOrgContributors(orgId, token) {
         const contributorsMap = {};
         const recentEvents = [];
 
+        // 1. Group indexed PRs by contributor
+        const contributorPRMap = {};
         for (const event of events) {
             const prData = toPRShape(event);
 
             const username = event.author;
-            const repoFullName = prData.base.repo.full_name;
-        // 1. Fetch PR details and group by contributor
-        const contributorPRMap = {};
-        for (const item of searchData.items) {
-            const username = item.user?.login;
             if (!username) continue;
 
-            const prUrl = item.pull_request?.url;
-            if (!prUrl) continue;
-
-            const prRes = await fetch(prUrl, { headers });
-            const prData = await prRes.json();
-
-            const repoFullName = prData.base?.repo?.full_name;
+            const repoFullName = prData.base.repo.full_name;
             const repoConfig = org.repositories.find(r => r.name === repoFullName);
             const metrics = extractPRMetrics(prData);
 
-            if (!contributorsMap[username]) {
-                contributorsMap[username] = {
-                    username,
-                    totalScore: 0,
-                    prCount: 0,
-                    avatar: event.authorAvatar
             if (!contributorPRMap[username]) {
                 contributorPRMap[username] = {
-                    user: item.user,
+                    user: { login: username, avatar_url: event.authorAvatar },
                     prs: []
                 };
             }
-            contributorPRMap[username].prs.push({ prData, repoFullName, repoConfig, metrics });
+            contributorPRMap[username].prs.push({ prData, attribution: attributionFromEvent(event), repoFullName, repoConfig, metrics });
         }
 
         // 2. Score each contributor using their historical reputation evidence
@@ -655,7 +623,8 @@ export async function computeOrgContributors(orgId, token) {
                     repo: prItem.repoFullName,
                     score: Math.round(prScore * 10) / 10,
                     timestamp: prItem.prData.merged_at,
-                    cid: `bafybei${Math.random().toString(16).substring(2, 10)}`
+                    cid: `bafybei${Math.random().toString(16).substring(2, 10)}`,
+                    ...prItem.attribution
                 });
             }
         }

@@ -150,21 +150,30 @@ export async function getRequiredApprovals() {
 export async function approvePayout(payoutId) {
     requireFlowCredentials();
     const id = String(payoutId);
-    if (!/^\d+$/.test(id) || BigInt(id) < 1n) throw new TypeError("Payout ID must be a positive integer");
+
+    if (!/^\d+$/.test(id) || BigInt(id) < 1n) {
+        throw new TypeError("Payout ID must be a positive integer");
+    }
+
     const cadence = `
         import KineticPayout from ${CONTRACT_ADDRESS}
-        transaction(id: UInt64) {
-            let treasury: &KineticPayout.OrgTreasury
-            let signerAddress: Address
-            prepare(signer: auth(BorrowValue) &Account) {
-                self.treasury = signer.storage.borrow<&KineticPayout.OrgTreasury>(from: /storage/OrgTreasury)
-                    ?? panic("Signer does not have an OrgTreasury setup in their storage")
-                self.signerAddress = signer.address
-            }
-            execute { self.treasury.approvePayout(id: id, signer: self.signerAddress) }
-        }
+
+       transaction(id: UInt64) {
+    let treasury: &KineticPayout.OrgTreasury
+
+    prepare(signer: auth(BorrowValue) &Account) {
+        self.treasury = signer.storage.borrow<&KineticPayout.OrgTreasury>(
+            from: /storage/OrgTreasury
+        ) ?? panic("Signer does not have an OrgTreasury setup in their storage")
+
+        self.treasury.approvePayout(id: id, signer: signer)
+    }
+}
     `;
-    return mutateAndSeal(cadence, (arg, t) => [arg(id, t.UInt64)]);
+
+    return mutateAndSeal(cadence, (arg, t) => [
+        arg(id, t.UInt64),
+    ]);
 }
 export async function executePayout(payoutId) {
     requireFlowCredentials();

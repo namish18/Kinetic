@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
     DETAIL_REFRESH_DAYS,
     DETAIL_REFRESH_MIN_AGE_HOURS,
+    attributionFromEvent,
     buildSearchQuery,
     detailsFromPR,
     eventFromSearchItem,
@@ -48,6 +49,7 @@ const rawPR = {
     base: { repo: { full_name: 'nodejs/node' } },
     head: { sha: 'abc' },
     merge_commit_sha: 'def',
+    merged_by: { login: 'bob', id: 2 },
     additions: 120,
     deletions: 300,
     changed_files: 6,
@@ -104,7 +106,8 @@ test('an indexed event scores exactly like the raw GitHub PR', () => {
 
 test('needsDetails: missing details, recent refresh window at most once a day, registered repos only', () => {
     const registered = new Set(['nodejs/node']);
-    const base = { repoKey: 'nodejs/node' };
+    // Details fetched after attribution was added always carry mergedBy
+    const base = { repoKey: 'nodejs/node', mergedBy: { login: 'bob', id: 2 } };
     const recent = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS - 1) * DAY);
     const old = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS + 1) * DAY);
     const HOUR = 60 * 60 * 1000;
@@ -117,6 +120,85 @@ test('needsDetails: missing details, recent refresh window at most once a day, r
     assert.equal(needsDetails({ ...base, detailsFetchedAt: fetchedRecently, mergedAt: recent }, registered, NOW), false);
     assert.equal(needsDetails({ ...base, detailsFetchedAt: fetchedOld, mergedAt: old }, registered, NOW), false);
     assert.equal(needsDetails({ repoKey: 'other/repo', detailsFetchedAt: null, mergedAt: recent }, registered, NOW), false);
+});
+
+test('event mapping carries repository, PR, commit SHA, author and merge event', () => {
+    const event = { ...eventFromSearchItem(searchItem(7), NOW), ...detailsFromPR(rawPR, NOW) };
+
+    assert.deepEqual(event.mergedBy, { login: 'bob', id: 2 });
+    assert.deepEqual(attributionFromEvent(event), {
+        repo: 'nodejs/node',
+        prNumber: 7,
+        commitSha: 'def',
+        headSha: 'abc',
+        author: 'alice',
+        authorId: 1,
+        mergedAt: '2026-11-01T10:00:00Z',
+        mergedBy: { login: 'bob', id: 2 }
+    });
+
+    // GitHub reported no merger: stored as null, so it is not "missing"
+    const noMerger = detailsFromPR({ ...rawPR, merged_by: null }, NOW);
+    assert.equal(noMerger.mergedBy, null);
+    assert.equal(attributionFromEvent({ ...event, ...noMerger }).mergedBy, null);
+});
+
+test('toPRShape round-trip is unchanged by attribution fields', () => {
+    const event = { ...eventFromSearchItem(searchItem(7), NOW), ...detailsFromPR(rawPR, NOW) };
+    const { mergedBy, mergeCommitSha, headSha, ...withoutAttribution } = event;
+
+    assert.deepEqual(toPRShape(event), toPRShape(withoutAttribution));
+    assert.deepEqual(extractPRMetrics(toPRShape(event)), extractPRMetrics(rawPR));
+});
+
+test('needsDetails: details fetched before attribution existed are fetched once more', () => {
+    const registered = new Set(['nodejs/node']);
+    const HOUR = 60 * 60 * 1000;
+    const old = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS + 1) * DAY);
+    const recent = new Date(NOW.getTime() - (DETAIL_REFRESH_DAYS - 1) * DAY);
+    const fetchedRecently = new Date(NOW.getTime() - (DETAIL_REFRESH_MIN_AGE_HOURS - 1) * HOUR);
+    const legacy = { repoKey: 'nodejs/node', detailsFetchedAt: new Date('2026-10-01T00:00:00Z'), mergedAt: old, mergeCommitSha: 'def' };
+
+    // Old PR whose details predate mergedBy: backfilled
+    assert.equal(needsDetails(legacy, registered, NOW), true);
+    // After the backfill (mergedBy set, or null when GitHub has none) it is done
+    assert.equal(needsDetails({ ...legacy, mergedBy: { login: 'bob', id: 2 } }, registered, NOW), false);
+    assert.equal(needsDetails({ ...legacy, mergedBy: null }, registered, NOW), false);
+    // Backfilled recent PRs still follow the 24h / 14-day refresh rule
+    assert.equal(needsDetails({ ...legacy, mergedAt: recent, detailsFetchedAt: fetchedRecently, mergedBy: null }, registered, NOW), false);
+    // Unregistered repos are never fetched
+    assert.equal(needsDetails({ ...legacy, repoKey: 'other/repo' }, registered, NOW), false);
+});
+
+test('syncIndex: backfills merge attribution for an index created before it existed', async () => {
+    const { Event, SyncState, calls } = fakeModels({
+        cursors: [{ scope: 'author:alice', lastMergedAt: new Date('2026-11-06T00:00:00Z') }],
+        events: [{
+            repoKey: 'nodejs/node', prNumber: 7, apiUrl: 'https://api.github.com/repos/nodejs/node/pulls/7',
+            mergedAt: new Date('2026-10-01T10:00:00Z'), detailsFetchedAt: new Date('2026-10-02T00:00:00Z'), mergeCommitSha: 'def'
+        }]
+    });
+    const urls = [];
+    globalThis.fetch = async (url) => {
+        urls.push(String(url));
+        if (String(url).includes('/search/issues')) return jsonResponse({ total_count: 0, items: [] });
+        return jsonResponse(rawPR);
+    };
+
+    const meta = await syncIndex({
+        scopes: [{ key: 'author:alice', qualifier: 'author:alice' }],
+        detailFilter: { authorKey: 'alice' },
+        registeredKeys: new Set(['nodejs/node']),
+        headers: {},
+        Event, SyncState, now: NOW
+    });
+
+    assert.equal(meta.detailRequests, 1);
+    assert.equal(meta.githubRequests, 2);
+    assert.ok(urls.includes('https://api.github.com/repos/nodejs/node/pulls/7'));
+    const detailWrite = calls.eventWrites.find(ops => !ops[0].updateOne.upsert);
+    assert.deepEqual(detailWrite[0].updateOne.update.$set.mergedBy, { login: 'bob', id: 2 });
+    assert.equal(detailWrite[0].updateOne.update.$set.mergeCommitSha, 'def');
 });
 
 test('upsertEvents upserts by { repoKey, prNumber } without touching stats', async () => {

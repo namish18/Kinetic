@@ -1,6 +1,6 @@
 import express from 'express';
 import passport from 'passport';
-import jwt from 'jsonwebtoken';
+import { authenticateToken, issueToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { getFromIPFS, authenticateDID } from '../services/didService.js';
 import { validateGithubUsernameParam, validateFlowWallet } from '../middleware/validate.js';
@@ -29,11 +29,7 @@ router.get(
         // Role is safely read directly from req.user (preserved DB role or default contributor)
         const finalRole = req.user.role || 'contributor';
 
-        const token = jwt.sign(
-            { id: req.user._id, github: req.user.github, did: req.user.did, role: finalRole },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
+        const token = issueToken({ id: req.user._id, github: req.user.github, did: req.user.did, role: finalRole });
 
         const frontendURL = process.env.FRONTEND_URL || 'http://localhost:3000';
         const redirectPath = finalRole === 'organization' ? '/org-dashboard' : '/dashboard';
@@ -177,6 +173,7 @@ router.get('/logout', (req, res) => {
     req.logout(() => res.json({ success: true, message: 'Logged out' }));
 });
 
+<<<<<< feature/sec-05-multisig-threshold
 // ─────────────────────────────────────────────────────────────
 //  JWT Middleware
 // ─────────────────────────────────────────────────────────────
@@ -195,3 +192,6 @@ function authenticateToken(req, res, next) {
 }
 
 export default router;
+
+export default router;
+ main
