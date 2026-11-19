@@ -118,9 +118,9 @@ export function validateEnv(env) {
         errors.push({ name: 'FLOW_ADDRESS', reason: 'is required when FLOW_PRIVATE_KEY or FLOW_CONTRACT_ADDRESS is set' });
     }
 
-    const warnings = env.FLOW_PRIVATE_KEY
-        ? []
-        : ['FLOW_PRIVATE_KEY is not set, so on-chain payout transactions will fail until it is configured.'];
+    const warnings = [];
+    if (!env.FLOW_PRIVATE_KEY) warnings.push('FLOW_PRIVATE_KEY is not set, so on-chain payout transactions will fail until it is configured.');
+    if (!env.GITHUB_PAT) warnings.push('GITHUB_PAT is not set, so Proof-of-Build cannot be verified and new contributions will not be scored.');
 
     return { errors, warnings };
 }

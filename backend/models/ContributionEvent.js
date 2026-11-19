@@ -53,6 +53,19 @@ const contributionEventSchema = new mongoose.Schema({
         labels: [{ type: String }]
     },
 
+    // Latest CI verdict for this PR's own commits. No default, so an event that
+    // has not been checked has no verdict at all. 'verified' is final.
+    proofOfBuild: {
+        type: new mongoose.Schema({
+            status: String,     // 'verified' | 'failed' | 'pending' | 'none'
+            runId: Number,      // the run that proved it (verified only)
+            sha: String,        // the commit it ran on (verified only)
+            kind: String,       // 'head' | 'merge' (verified only)
+            checkedAt: Date
+        }, { _id: false }),
+        default: undefined
+    },
+
     fetchedAt: { type: Date },                         // last seen in a search result
     detailsFetchedAt: { type: Date, default: null }   // last time stats were fetched
 });
