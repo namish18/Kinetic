@@ -129,8 +129,47 @@ export function attributionFromEvent(event) {
         author: event.author,
         authorId: event.authorId ?? null,
         mergedAt: event.mergedAt ? isoSeconds(event.mergedAt) : null,
-        mergedBy: event.mergedBy ? { login: event.mergedBy.login, id: event.mergedBy.id ?? null } : null
+        mergedBy: event.mergedBy ? { login: event.mergedBy.login, id: event.mergedBy.id ?? null } : null,
+        ciEvidence: event.ciEvidence || null
     };
+}
+
+/**
+ * Commits CI may have run on for an indexed PR: its head (PR CI) and its
+ * merge commit (post-merge CI). Empty until the PR's details are fetched.
+ */
+export function expectedShasForEvent(event) {
+    return [
+        { sha: event.headSha, kind: 'head' },
+        { sha: event.mergeCommitSha, kind: 'merge' }
+    ].filter(e => e.sha);
+}
+
+/**
+ * Stores CI evidence on an indexed PR. Only GitHub-confirmed runs that ran on
+ * the PR's own head or merge commit are stored, and an unverified result never
+ * replaces verified evidence. Returns true when the event was updated.
+ */
+export async function recordCiEvidence(Event, { repoKey, prNumber }, evidence, now = new Date()) {
+    if (!evidence?.confirmed || !evidence.matchedCommit) return false;
+    const filter = evidence.verified
+        ? { repoKey, prNumber }
+        : { repoKey, prNumber, 'ciEvidence.verified': { $ne: true } };
+    const result = await Event.updateOne(filter, {
+        $set: {
+            ciEvidence: {
+                runId: evidence.runId,
+                headSha: evidence.headSha,
+                status: evidence.status,
+                conclusion: evidence.conclusion,
+                matchedCommit: evidence.matchedCommit,
+                verified: evidence.verified,
+                reason: evidence.reason,
+                checkedAt: now
+            }
+        }
+    });
+    return (result.modifiedCount ?? result.nModified ?? 0) > 0;
 }
 
 /**

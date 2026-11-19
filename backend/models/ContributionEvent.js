@@ -41,6 +41,22 @@ const contributionEventSchema = new mongoose.Schema({
     mergeCommitSha: { type: String, default: null },
     headSha: { type: String, default: null },
 
+    // CI evidence: the latest GitHub-confirmed workflow run that ran on this
+    // PR's head or merge commit (written by GET /api/kinetic/proof-of-build?pr=)
+    ciEvidence: {
+        type: new mongoose.Schema({
+            runId: Number,
+            headSha: String,
+            status: String,
+            conclusion: String,
+            matchedCommit: { sha: String, kind: String },
+            verified: Boolean,
+            reason: String,
+            checkedAt: Date
+        }, { _id: false }),
+        default: undefined
+    },
+
     // Raw PR fields needed by extractPRMetrics()
     stats: {
         additions: { type: Number },

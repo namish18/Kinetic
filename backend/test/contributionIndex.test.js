@@ -134,7 +134,8 @@ test('event mapping carries repository, PR, commit SHA, author and merge event',
         author: 'alice',
         authorId: 1,
         mergedAt: '2026-11-01T10:00:00Z',
-        mergedBy: { login: 'bob', id: 2 }
+        mergedBy: { login: 'bob', id: 2 },
+        ciEvidence: null
     });
 
     // GitHub reported no merger: stored as null, so it is not "missing"
