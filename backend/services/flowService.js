@@ -13,9 +13,16 @@ const FLOW_ADDRESS = process.env.FLOW_ADDRESS;
 const PRIVATE_KEY = process.env.FLOW_PRIVATE_KEY;
 const CONTRACT_ADDRESS = process.env.FLOW_CONTRACT_ADDRESS || FLOW_ADDRESS;
 
+function requireFlowReadConfig() {
+    if (!FLOW_ADDRESS || !CONTRACT_ADDRESS) {
+        throw new Error("Missing FLOW_ADDRESS or FLOW_CONTRACT_ADDRESS configuration");
+    }
+}
+
 function requireFlowCredentials() {
-    if (!FLOW_ADDRESS || !PRIVATE_KEY || !CONTRACT_ADDRESS) {
-        throw new Error("Missing FLOW_ADDRESS, FLOW_PRIVATE_KEY, or FLOW_CONTRACT_ADDRESS configuration");
+    requireFlowReadConfig();
+    if (!PRIVATE_KEY) {
+        throw new Error("Missing FLOW_PRIVATE_KEY configuration");
     }
 }
 
@@ -99,7 +106,7 @@ function extractPayoutId(details) {
  * Read the treasury's available FLOW balance from the deployed contract.
  */
 export async function getTreasuryBalance() {
-    requireFlowCredentials();
+    requireFlowReadConfig();
     const balance = await fcl.query({
         cadence: `
             import KineticPayout from ${CONTRACT_ADDRESS}
@@ -121,8 +128,8 @@ export async function getTreasuryBalance() {
  * Read the configured approval threshold from the deployed treasury.
  */
 export async function getRequiredApprovals() {
-    requireFlowCredentials();
-    const threshold = await fcl.query({
+    requireFlowReadConfig();
+    const result = await fcl.query({
         cadence: `
             import KineticPayout from ${CONTRACT_ADDRESS}
 
@@ -136,18 +143,18 @@ export async function getRequiredApprovals() {
         `,
         args: (arg, t) => [arg(FLOW_ADDRESS, t.Address)],
     });
-    const value = Number(unwrapCadenceValue(threshold));
-    if (!Number.isSafeInteger(value) || value < 1) {
-        throw new Error("The Flow treasury returned an invalid approval threshold");
+    const threshold = Number(unwrapCadenceValue(result));
+    if (!Number.isSafeInteger(threshold) || threshold < 1) {
+        throw new Error("Invalid Flow approval threshold");
     }
-    return value;
+    return threshold;
 }
 
 /**
- * Retrieve a payout record from the treasury contract.
+ * Read a payout proposal and its sealed execution state from Flow.
  */
 export async function getPayout(payoutId) {
-    requireFlowCredentials();
+    requireFlowReadConfig();
     const id = String(payoutId);
     if (!/^\d+$/.test(id) || BigInt(id) < 1n) {
         throw new TypeError("Payout ID must be a positive integer");
@@ -268,6 +275,7 @@ export async function proposePayout(contributorAddress, amountFlow) {
  * Record the current transaction signer's approval on an existing proposal.
  */
 export async function approvePayout(payoutId) {
+    requireFlowCredentials();
     const id = String(payoutId);
     if (!/^\d+$/.test(id) || BigInt(id) < 1n) {
         throw new TypeError("Payout ID must be a positive integer");
@@ -278,16 +286,13 @@ export async function approvePayout(payoutId) {
 
         transaction(id: UInt64) {
             let treasury: &KineticPayout.OrgTreasury
-            let signerAddress: Address
 
             prepare(signer: auth(BorrowValue) &Account) {
-                self.treasury = signer.storage.borrow<&KineticPayout.OrgTreasury>(from: /storage/OrgTreasury)
-                    ?? panic("Signer does not have an OrgTreasury setup in their storage")
-                self.signerAddress = signer.address
-            }
+                self.treasury = signer.storage.borrow<&KineticPayout.OrgTreasury>(
+                    from: /storage/OrgTreasury
+                ) ?? panic("Signer does not have an OrgTreasury setup in their storage")
 
-            execute {
-                self.treasury.approvePayout(id: id, signer: self.signerAddress)
+                self.treasury.approvePayout(id: id, signer: signer)
             }
         }
     `;
@@ -300,6 +305,7 @@ export async function approvePayout(payoutId) {
  * The contract performs the final threshold, balance, and replay checks too.
  */
 export async function executePayout(payoutId) {
+    requireFlowCredentials();
     const id = String(payoutId);
     if (!/^\d+$/.test(id) || BigInt(id) < 1n) {
         throw new TypeError("Payout ID must be a positive integer");

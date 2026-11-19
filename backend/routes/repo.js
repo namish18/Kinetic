@@ -1,7 +1,12 @@
 import express from 'express';
-import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
-import { computeOrgContributors } from '../services/contributionService.js';
+import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
+import {
+    DEFAULT_SCORING_WEIGHTS,
+    mergeScoringWeights,
+    validateScoringWeights
+} from '../config/scoringWeights.js';
 import {
     approvePayout as approvePayoutOnFlow,
     executePayout as executePayoutOnFlow,
@@ -21,21 +26,16 @@ import {
     canExecutePayout,
     derivePayoutStatus,
 } from '../services/payoutLifecycleService.js';
+import {
+    validateAddRepository,
+    validateRepoIdParam,
+    validateUpdateBranches,
+    validateRepoConfig,
+    sendValidationError,
+    normalizeRepoName
+} from '../middleware/validate.js';
 
 const router = express.Router();
-
-function authenticateToken(req, res, next) {
-    const auth = req.headers['authorization'];
-    const token = auth && auth.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Access token required' });
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(403).json({ error: 'Invalid or expired token' });
-    }
-}
 
 /**
  * GET /api/org/all
@@ -52,6 +52,7 @@ router.get('/all', async (req, res) => {
                     owner: u.github,
                     ownerAvatar: u.avatarUrl || `https://github.com/${u.github}.png`,
                     weights: r.weights,
+                    reputationWeights: r.reputationWeights || DEFAULT_REPUTATION_WEIGHTS,
                     totalPool: 1000 + (r.name.length * 50), // Semi-stable pool
                     activePRs: 5 + (r.name.length % 5)
                 });
@@ -90,31 +91,11 @@ router.get('/info', authenticateToken, async (req, res) => {
 });
 
 /**
- * Normalize a repo identifier to "owner/repo" format.
- * Accepts full GitHub URLs, github.com/owner/repo, or plain owner/repo.
- */
-function normalizeRepoName(input) {
-    // Strip protocol and domain if present
-    let cleaned = input.trim();
-    cleaned = cleaned.replace(/^https?:\/\//i, '');   // remove https:// or http://
-    cleaned = cleaned.replace(/^github\.com\//i, ''); // remove github.com/
-    cleaned = cleaned.replace(/\.git$/i, '');          // remove trailing .git
-    cleaned = cleaned.replace(/\/+$/, '');             // remove trailing slashes
-    // Now should be "owner/repo" — take only first two path segments
-    const parts = cleaned.split('/').filter(Boolean);
-    if (parts.length < 2) return cleaned; // can't normalize, return as-is
-    return `${parts[0]}/${parts[1]}`;
-}
-
-/**
  * POST /api/org/repositories
  */
-router.post('/repositories', authenticateToken, async (req, res) => {
+router.post('/repositories', authenticateToken, validateAddRepository, async (req, res) => {
     try {
-        const { repository } = req.body;
-        if (!repository) return res.status(400).json({ error: 'Repository name required' });
-
-        const repoName = normalizeRepoName(repository); // always store as owner/repo
+        const repoName = req.normalizedRepo; // validated & normalized "owner/repo"
 
         const user = await User.findById(req.user.id);
         const exists = user.repositories.find(r => r.name === repoName);
@@ -122,7 +103,8 @@ router.post('/repositories', authenticateToken, async (req, res) => {
             user.repositories.push({
                 name: repoName,
                 targetBranches: ['main'],
-                weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 }
+                weights: { ...DEFAULT_SCORING_WEIGHTS },
+                reputationWeights: DEFAULT_REPUTATION_WEIGHTS
             });
             await user.save();
         }
@@ -136,10 +118,9 @@ router.post('/repositories', authenticateToken, async (req, res) => {
  * GET /api/org/repositories/:repoId/branches
  * Fetch all branches for a repository from GitHub API
  */
-router.get('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
+router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), async (req, res) => {
     try {
-        // Normalize in case old records were stored as full URLs
-        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        const repoName = req.normalizedRepoId;
         const pat = process.env.GITHUB_PAT;
 
         const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Kinetic-App' };
@@ -172,10 +153,9 @@ router.get('/repositories/:repoId/branches', authenticateToken, async (req, res)
 /**
  * PUT /api/org/repositories/:repoId/branches
  */
-
-router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
+router.put('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), validateUpdateBranches, async (req, res) => {
     try {
-        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        const repoName = req.normalizedRepoId;
         const { targetBranches } = req.body;
 
         const user = await User.findById(req.user.id);
@@ -194,23 +174,31 @@ router.put('/repositories/:repoId/branches', authenticateToken, async (req, res)
  * PUT /api/org/repositories/:repoId/config
  * Update multiple repo settings at once
  */
-router.put('/repositories/:repoId/config', authenticateToken, async (req, res) => {
+router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdParam('repoId'), validateRepoConfig, async (req, res) => {
     try {
-        const repoName = decodeURIComponent(req.params.repoId);
-        const { targetBranches, weights, bountyPool } = req.body;
+        const repoName = req.normalizedRepoId;
+        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
 
         const user = await User.findById(req.user.id);
         const repo = user.repositories.find(r => r.name === repoName);
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
 
-        if (targetBranches) repo.targetBranches = targetBranches;
+        // Validate the final merged weights before mutating the repository.
+        let nextWeights = null;
         if (weights) {
-            repo.weights = {
-                impact: weights.impact ?? repo.weights.impact,
-                complexity: weights.complexity ?? repo.weights.complexity,
-                quality: weights.quality ?? repo.weights.quality,
-                review: weights.review ?? repo.weights.review,
-                priority: weights.priority ?? repo.weights.priority
+            nextWeights = mergeScoringWeights(repo.weights, weights);
+            const { valid, errors } = validateScoringWeights(nextWeights);
+            if (!valid) return sendValidationError(res, errors);
+        }
+
+        if (targetBranches) repo.targetBranches = targetBranches;
+        if (nextWeights) repo.weights = nextWeights;
+        if (reputationWeights) {
+            repo.reputationWeights = {
+                alpha: reputationWeights.alpha ?? repo.reputationWeights?.alpha ?? DEFAULT_REPUTATION_WEIGHTS.alpha,
+                beta: reputationWeights.beta ?? repo.reputationWeights?.beta ?? DEFAULT_REPUTATION_WEIGHTS.beta,
+                gamma: reputationWeights.gamma ?? repo.reputationWeights?.gamma ?? DEFAULT_REPUTATION_WEIGHTS.gamma,
+                delta: reputationWeights.delta ?? repo.reputationWeights?.delta ?? DEFAULT_REPUTATION_WEIGHTS.delta
             };
         }
         if (typeof bountyPool === 'number') repo.bountyPool = bountyPool;
@@ -221,8 +209,6 @@ router.put('/repositories/:repoId/config', authenticateToken, async (req, res) =
         res.status(500).json({ error: 'Server error', message: error.message });
     }
 });
-
-export default router;
 
 function isValidPayoutId(value) {
     return /^\d+$/.test(String(value)) && BigInt(String(value)) >= 1n;
@@ -311,7 +297,12 @@ router.post('/payout/propose', authenticateToken, async (req, res) => {
             amountsByAddress[wallet] = formatFlowUnits(
                 (amountsByAddress[wallet] ? toFlowUnits(amountsByAddress[wallet]) : 0n) + amountUnits
             );
-            return { username: item.username, wallet, amount: item.amount, score: contributors.find(c => c.username === item.username)?.totalScore ?? 0 };
+            return {
+                username: item.username,
+                wallet,
+                amount: item.amount,
+                score: contributors.find(c => c.username === item.username)?.totalScore ?? 0
+            };
         });
 
         const proposal = await proposePayouts(amountsByAddress);
@@ -395,7 +386,10 @@ router.post('/payout/:payoutId/approve', authenticateToken, async (req, res) => 
             getRequiredApprovals(),
         ]);
         if (!updated) {
-            return res.status(502).json({ error: "Approval transaction sealed but payout state could not be refreshed", transactionId: transaction.transactionId });
+            return res.status(502).json({
+                error: "Approval transaction sealed but payout state could not be refreshed",
+                transactionId: transaction.transactionId
+            });
         }
 
         return res.json({
@@ -466,3 +460,5 @@ router.post('/payout/execute', authenticateToken, (req, res) => {
         error: "A payout ID is required. Use POST /api/org/payout/propose, then approve and execute the returned proposal.",
     });
 });
+
+export default router;

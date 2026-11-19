@@ -1,6 +1,6 @@
 /**
  * Kinetic Core Mechanisms 
- * Implements: Proof-of-Build (CI/CD Verification) & Quadratic Funding
+ * Implements: Proof-of-Build (CI/CD Verification), Quadratic Funding, & Spam Penalty
  */
 
 import { computeContributionScore } from './contributionService.js';
@@ -42,7 +42,36 @@ export async function verifyProofOfBuild(ownerRepo, runId, token) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Mechanism 2: Dependency-Weighted Quadratic Funding (DWQF)
+// Mechanism 2: Anti-Gaming Spam & Velocity Penalty
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Calculates submission penalty considering both total count (k) and PR velocity.
+ * @param {Array<Date|string>} prTimestamps - Historical PR submission timestamps
+ * @returns {number} Penalty multiplier (0.0 - 1.0)
+ */
+export function calculateSpamPenalty(prTimestamps = []) {
+    const k = prTimestamps.length;
+    if (k <= 1) return 1.0;
+
+    // Base diminishing returns formula: 1 / (1 + 0.1 * (k - 1))
+    let penalty = 1 / (1 + 0.1 * (k - 1));
+
+    // Velocity check: calculate time difference between recent submissions
+    const lastPRTime = new Date(prTimestamps[k - 1]).getTime();
+    const prevPRTime = new Date(prTimestamps[k - 2]).getTime();
+    const diffMinutes = (lastPRTime - prevPRTime) / (1000 * 60);
+
+    // Apply 20% extra penalty if PRs are submitted within 10 minutes of each other
+    if (diffMinutes < 10) {
+        penalty *= 0.8;
+    }
+
+    return Number(penalty.toFixed(4));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Mechanism 3: Dependency-Weighted Quadratic Funding (DWQF)
 // Distributes funds based on the number of contributors, but 
 // weighs their votes using their MSTS score (impact) instead of money
 // ─────────────────────────────────────────────────────────────

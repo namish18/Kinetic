@@ -4,16 +4,6 @@
 
 # FINAL ALGORITHM
 
-## Step -1: Verification Gate (Proof-of-Build)
-
-Before any PR is processed by the scoring engine, it must pass the **Proof-of-Build** verification.
-
-1. **Query GitHub Actions API**: Fetch all workflow runs associated with the PR's head commit.
-2. **Success Requirement**: At least one CI/CD run must have a `conclusion` of `success`.
-3. **Failure Policy**: If no successful build trace is found, `FinalScore = 0`. No further calculations are performed.
-
----
-
 ## Step 0: Inputs
 
 
@@ -25,11 +15,12 @@ For each PR *i*:
 * reviewᵢ ∈ [0,1]
 * priorityᵢ ∈ [0,1]
 * contributor reputation Rᵢ
+
 Global:
 
-* bounty_pool = B
-* weights: w₁…w₅
-* λ = reputation influence (≤ 0.5)
+* Repository-specific weights for impact, complexity, quality, review, and priority.
+* Reputation influence constant: λ = 0.5.
+* Maximum PR complexity input: 10,000 changed lines.
 
 ---
 
@@ -61,7 +52,6 @@ Baseᵢ =
   w₄*reviewᵢ +
   w₅*priorityᵢ
 ```
-
 ---
 
 ## Step 3: Complexity Anti-Gaming (Already Applied)
@@ -69,7 +59,7 @@ Baseᵢ =
 Ensure:
 
 ```
-complexityᵢ = log(lines_changed + 1) / log(max_lines + 1)
+complexity = min(1, log(additions + deletions + 1) / log(10001))
 ```
 
 Prevents artificially large PRs
@@ -87,88 +77,101 @@ Rᵢ =
   γ*(historical_impact) +
   δ*(consistency)
 ```
+Default reputation weights (configurable through environment variables):
 
+- α (accepted PRs) = 10
+- β (average review score) = 25
+- γ (historical impact) = 30
+- δ (consistency) = 20
+
+The reputation calculation uses these weights unless custom weights are supplied.
+
+### Consistency Score Calculation
+
+- No eligible PRs: consistency = 0.
+- One eligible PR: consistency = 0.5.
+- Otherwise, consistency is calculated using the number of unique active calendar weeks:
+
+  `consistency = min(1.0, max(0.2, unique_active_weeks / 5))`
+
+The calculation uses PR merge timestamps, falling back to update timestamps when necessary.
 ---
 
-### 4.2 Normalize Reputation (Anti-Elitism)
+### 4.2 Normalize Reputation
 
-```
-R_normᵢ = log(Rᵢ + 1) / log(R_max + 1)
-```
+R_norm = max(0, log(R + 1) / log(501))
 
 ---
 
 ### 4.3 Reputation Multiplier (Capped)
 
-```
-RepMultᵢ = 1 + λ * R_normᵢ
+RepMult = min(1.5, 1 + 0.5 * min(1, R_norm))
 
-RepMultᵢ = min(1.5, RepMultᵢ)
-```
-
-Prevents dominance by top contributors
+The multiplier is capped at 1.5 to limit the influence of historical reputation.
 
 ---
+
+## Step 5: PR Metric Calculation
+
+The scoring service extracts five metrics from each pull request:
+
+| Metric | Implementation |
+|---|---|
+| Impact | `min(1, ((changed_files * 2) + commits) / 50)` |
+| Complexity | Logarithmic scaling of additions and deletions, capped at 1 |
+| Quality | Starts at 0.8; adds 0.1 if deletions exceed additions and 0.1 if the PR is merged; capped at 1 |
+| Review | `min(1, (review_comments / 10) + 0.5)` |
+| Priority | 1.0 if a label contains priority, high, critical, or urgent; otherwise 0.4 |
+
 
 ## Step 6: Final Score
 
 ```
-Finalᵢ =
-  Baseᵢ
-  × RepMultᵢ
+Final PR Score =
+  round(Base Score × Reputation Multiplier × Spam Penalty, 4)
 ```
 
----
+### Spam Penalty
 
-## Step 7: Anti-Gaming Post Adjustments
+When PR timestamp history is provided:
 
-### 7.1 Diminishing Returns for Same Contributor
+- If there is at most one timestamp, the penalty is 1.0.
+- For multiple timestamps, the base penalty is:
 
-Let contributor has k PRs in period:
+  `1 / (1 + 0.1 * (k - 1))`
 
-```
-Penalty_factor = 1 / (1 + 0.1*(k-1))
+- If the two most recent PR submissions are less than 10 minutes apart, an additional 20% penalty is applied.
+- The penalty is rounded to four decimal places.
 
-Finalᵢ = Finalᵢ × Penalty_factor
-```
+If timestamp history is not provided, the scoring function uses a neutral penalty of 1.0.
 
-Prevents PR spamming
+## Step 7: Organization Contributor Score
 
----
+The organization scoring service calculates contributor scores using
+their eligible merged PRs and repository-specific weights.
 
-### 7.2 Duplicate / Similar PR Handling
+- Each PR score is scaled by 20 to calculate contribution points.
+- Contributor points are accumulated across eligible PRs.
+- The final contributor score is capped at 100.
 
-If PR overlaps significantly:
+## Step 8: Payout Calculation
 
-```
-split reward among similar PRs
-```
+The implementation supports two payout paths:
 
----
+### 8.1 PR Webhook Payout
 
-### 7.3 Revert / Failure Penalty
+- Calculates payout using the normalized individual PR score.
+- Payout = `min(10, round(PRScore × 0.1, 3))` FLOW.
+- The payout is capped at 10 FLOW per PR.
 
-```
-if PR reverted:
-    Finalᵢ = 0
-    reputation -= penalty
-```
+### 8.2 Organization Payout
 
----
+- Calculates payout using the contributor's organization score.
+- Payout = Contributor Total Score × 5 FLOW.
+- If the contributor has no linked wallet, the payout is marked as pending.
 
-## Step 8: Normalize Scores
-
-```
-Total = Σ Finalᵢ
-```
-
----
-
-## Step 9: Reward Distribution
-
-```
-Payoutᵢ = (Finalᵢ / Total) × B
-```
+These scoring-related payout calculations are separate and do not use
+proportional distribution of a shared bounty pool.
 
 ---
 
@@ -178,49 +181,42 @@ Payoutᵢ = (Finalᵢ / Total) × B
 
 ## 1. Fairness via Base Score
 
-The base score ensures:
+The base score combines five repository-configurable metrics:
 
-* High impact > low effort fixes
-* Good code > large code
-* Maintainer review matters
+- Impact
+- Complexity
+- Quality
+- Review
+- Priority
+
+Each metric contributes according to its configured repository weight.
 
 ---
 
 ## 2. Anti-Gaming Protection
 
-| Attack          | Defense                         |
-| --------------- | ------------------------------- |
-| Huge useless PR | log complexity                  |
-| Spam PRs        | threshold + diminishing returns |
-| Low quality PRs | hard cutoff                     |
-| Duplicate work  | reward splitting                |
-
+| Attack | Defense |
+|---|---|
+| Very large PRs | Logarithmic complexity scaling |
+| Spam or micro PRs | Minimum impact and complexity thresholds, plus timestamp-based submission penalties |
+| Low-quality PRs | Quality and review score cutoffs |
 ---
 
 ## 3. Reputation (Long-Term Incentive)
 
-* Good contributors earn **up to 1.5× boost**
-* Log normalization prevents runaway advantage
-* New contributors still competitive
+- Reputation combines accepted PR count, average review score, historical impact, and consistency.
+- Logarithmic normalization limits the influence of high reputation values.
+- The reputation multiplier is capped at 1.5.
+- Contributors without historical reputation receive no reputation boost.
 
 ---
 
----
-
-## 5. Anti-Elitism Guarantees
-
-* Reputation capped
-* Log scaling reduces gap
-* New contributors not excluded
-
----
-
-## 6. Stability of System
+## 4. Stability of System
 
 Because:
 
 ```
-Final Score = Objective × History
+Final PR Score = Base Score × Reputation Multiplier × Spam Penalty
 ```
 
 You get:
@@ -230,19 +226,16 @@ You get:
 
 ---
 
-## 7. Economic Soundness
+## 5. Payout Calculation
 
-```
-Σ payouts = bounty_pool
-```
+Payouts are calculated using two separate mechanisms:
 
-Always:
+- PR webhook payouts are based on individual PR scores, with a maximum of 10 FLOW per PR.
+- Organization payouts are based on contributor scores, at 5 FLOW per point.
 
-* No overspending
-* Fully distributed
-* Incentive aligned
+The implementation does not guarantee that total payouts equal a predefined bounty pool.
 
 ---
 
-contributors and organizations will login with their guthub
+contributors and organizations will login with their github
 the contributor will add their repos, they can define the weights for each repos based on it the bounty payout will be calculated/

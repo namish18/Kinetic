@@ -14,21 +14,21 @@ test("a new payout proposal remains proposed before approvals", () => {
     assert.equal(canExecutePayout(proposed, 2), false);
 });
 
-test("a proposal with some but not all approvals is partially approved", () => {
-    const record = { ...proposed, approvals: ["0x0000000000000001"] };
+test("partial approval does not permit execution", () => {
+    const record = { ...proposed, approvals: ["0x1"] };
     assert.equal(derivePayoutStatus(record, 2), "partially_approved");
     assert.equal(canApprovePayout(record, 2), true);
     assert.equal(canExecutePayout(record, 2), false);
 });
 
-test("a proposal becomes executable only after its approval threshold", () => {
+test("the approval threshold makes a proposal executable", () => {
     const record = { ...proposed, approvals: ["0x1", "0x2"] };
     assert.equal(derivePayoutStatus(record, 2), "approved");
     assert.equal(canApprovePayout(record, 2), false);
     assert.equal(canExecutePayout(record, 2), true);
 });
 
-test("an executed proposal cannot be approved or executed again", () => {
+test("executed payouts cannot be approved or executed again", () => {
     const record = { ...proposed, approvals: ["0x1", "0x2"], executed: true };
     assert.equal(derivePayoutStatus(record, 2), "executed");
     assert.equal(canApprovePayout(record, 2), false);
