@@ -1,6 +1,20 @@
 import { createHash } from 'node:crypto';
 import { CID } from 'multiformats/cid';
 import ContributionScore from '../models/ContributionScore.js';
+import {
+    assertPublicSafe,
+    cleanLogin,
+    cleanRepository,
+    cleanPrNumber,
+    buildPullUrl,
+    cleanCommitSha,
+    cleanTimestamp,
+    cleanText,
+    cleanRunStatus,
+    cleanRunConclusion,
+    cleanAlgorithmVersion,
+    WEIGHT_KEYS
+} from './evidencePrivacy.js';
 
 export const EVIDENCE_SCHEMA = 'kinetic-evidence/v1';
 
@@ -67,6 +81,41 @@ export async function fetchCIEvidence({ repository, prNumber, commitSha, token, 
     }
 }
 
+const VISIBILITY_CACHE_MS = 60 * 60 * 1000;
+const visibilityCache = new Map();
+
+export function clearVisibilityCache() {
+    visibilityCache.clear();
+}
+
+/**
+ * Whether a repository is public: true, false, or null when it cannot be
+ * determined. Evidence goes to a public network, so callers treat anything
+ * other than true as "do not publish". Definite answers are cached for an hour.
+ */
+export async function fetchRepositoryVisibility({ repository, token, fetchFn = fetch, now = Date.now() }) {
+    const key = String(repository || '').toLowerCase();
+    const cached = visibilityCache.get(key);
+    if (cached && now - cached.at < VISIBILITY_CACHE_MS) return cached.isPublic;
+
+    try {
+        const res = await fetchFn(`https://api.github.com/repos/${repository}`, {
+            headers: {
+                Accept: 'application/vnd.github.v3+json',
+                ...(token && { Authorization: `Bearer ${token}` })
+            }
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (typeof data.private !== 'boolean') return null;
+        const isPublic = data.private === false && (data.visibility === undefined || data.visibility === 'public');
+        visibilityCache.set(key, { isPublic, at: now });
+        return isPublic;
+    } catch {
+        return null;
+    }
+}
+
 // How long a package with final CI results is trusted before CI is checked again.
 export const EVIDENCE_RECHECK_MS = 24 * 60 * 60 * 1000;
 
@@ -105,49 +154,61 @@ export function shouldRefreshEvidence(previous, { score, algorithmVersion, now =
 }
 
 /**
- * Builds the evidence package for one scored contribution.
- * Only known fields are copied in, so nothing else can leak into it.
+ * Builds the public evidence package for one scored contribution.
+ *
+ * The package goes to a public IPFS network, so it is built with data
+ * minimization: only known fields are included, and every value is validated
+ * or rebuilt from safe parts (see evidencePrivacy.js) instead of being copied.
+ * The finished package is then checked for emails, tokens and credentials.
+ * Throws if required identifiers are invalid or the package is not safe to publish.
+ *
  * Same input always gives the same package (and the same CID).
  */
 export function buildEvidencePackage({ contribution, ci, scoreInputs, score, algorithm, generatedAt } = {}) {
-    if (!contribution?.username || !contribution?.repository || contribution?.prNumber === undefined) {
-        throw new Error('Evidence package needs contribution username, repository and prNumber');
+    const username = cleanLogin(contribution?.username);
+    const repository = cleanRepository(contribution?.repository);
+    const prNumber = cleanPrNumber(contribution?.prNumber);
+    if (!username || !repository || !prNumber) {
+        throw new Error('Evidence package needs a valid contribution username, repository and prNumber');
     }
-    if (!algorithm?.version) {
-        throw new Error('Evidence package needs an algorithm version');
+    const algorithmVersion = cleanAlgorithmVersion(algorithm?.version);
+    if (!algorithmVersion) {
+        throw new Error('Evidence package needs a valid algorithm version');
     }
 
     const inputs = pickNumbers(scoreInputs, SCORE_INPUT_KEYS);
     if (scoreInputs?.weights && typeof scoreInputs.weights === 'object') {
-        inputs.weights = pickNumbers(scoreInputs.weights, Object.keys(scoreInputs.weights));
+        inputs.weights = pickNumbers(scoreInputs.weights, WEIGHT_KEYS);
     }
 
-    return {
+    const evidencePackage = {
         schema: EVIDENCE_SCHEMA,
-        ...(generatedAt && { generatedAt: new Date(generatedAt).toISOString() }),
+        ...(cleanTimestamp(generatedAt) && { generatedAt: cleanTimestamp(generatedAt) }),
         contribution: {
-            username: contribution.username,
-            repository: contribution.repository,
-            prNumber: contribution.prNumber,
-            prUrl: contribution.prUrl || null,
-            mergedAt: contribution.mergedAt || null
+            username,
+            repository,
+            prNumber,
+            prUrl: buildPullUrl(repository, prNumber),
+            mergedAt: cleanTimestamp(contribution.mergedAt)
         },
         ciEvidence: {
-            commitSha: ci?.commitSha || contribution.commitSha || null,
+            commitSha: cleanCommitSha(ci?.commitSha) || cleanCommitSha(contribution.commitSha),
             verified: typeof ci?.verified === 'boolean' ? ci.verified : null,
             runs: (ci?.runs || []).map(r => ({
-                name: r.name,
-                status: r.status,
-                conclusion: r.conclusion ?? null
+                name: cleanText(r?.name),
+                status: cleanRunStatus(r?.status),
+                conclusion: cleanRunConclusion(r?.conclusion)
             }))
         },
         scoreInputs: inputs,
         score: Number.isFinite(Number(score)) ? Number(score) : null,
         algorithm: {
-            name: algorithm.name || null,
-            version: algorithm.version
+            name: cleanText(algorithm.name),
+            version: algorithmVersion
         }
     };
+
+    return assertPublicSafe(evidencePackage);
 }
 
 async function storeWithHelia(evidencePackage) {
@@ -159,9 +220,12 @@ async function storeWithHelia(evidencePackage) {
 
 /**
  * Stores the package on IPFS and returns its real CID.
- * Throws if storing fails or the CID is not valid. Never makes one up.
+ * Throws if the package fails the privacy check, storing fails, or the CID is not valid.
+ * Never makes one up.
  */
 export async function storeEvidencePackage(evidencePackage, { store = storeWithHelia } = {}) {
+    // Last check before anything is published: refuse packages with emails, tokens or credentials
+    assertPublicSafe(evidencePackage);
     const cid = await store(evidencePackage);
     if (!isValidCid(cid)) throw new Error('IPFS did not return a valid CID');
     return cid;
@@ -230,13 +294,22 @@ export async function recordContributionEvidence(input, { store, model = Contrib
  * read CI evidence, then record it. Returns the linked CID, or null when
  * nothing was linked. Never throws.
  *
- * deps (all optional, for tests): fetchCI, record, logger, now
+ * Evidence is public, so it is only published for repositories confirmed to be
+ * public. For private repositories, or when visibility cannot be confirmed,
+ * nothing is published and no CID is linked.
+ *
+ * deps (all optional, for tests): checkVisibility, fetchCI, record, logger, now
  */
 export async function ensureContributionEvidence({ contribution, scoreInputs, score, algorithm, previous, token }, deps = {}) {
-    const { fetchCI = fetchCIEvidence, record = recordContributionEvidence, logger = console, now = new Date(), store, model } = deps;
+    const { checkVisibility = fetchRepositoryVisibility, fetchCI = fetchCIEvidence, record = recordContributionEvidence, logger = console, now = new Date(), store, model } = deps;
     try {
         if (!shouldRefreshEvidence(previous, { score, algorithmVersion: algorithm?.version, now })) {
             return previous.evidenceCID;
+        }
+        const isPublic = await checkVisibility({ repository: contribution.repository, token });
+        if (isPublic !== true) {
+            logger.warn(`Evidence not published for ${contribution.repository}: ${isPublic === false ? 'repository is private' : 'repository visibility could not be confirmed'}`);
+            return null;
         }
         const ci = await fetchCI({
             repository: contribution.repository,
