@@ -1,5 +1,5 @@
 import express from "express";
-import jwt from "jsonwebtoken";
+import { authenticateToken } from "../middleware/auth.js";
 import User from "../models/User.js";
 import {
     approvePayout,
@@ -14,18 +14,6 @@ import {
 } from "../services/payoutLifecycleService.js";
 
 const router = express.Router();
-
-function authenticateToken(req, res, next) {
-    const auth = req.headers.authorization;
-    const token = auth && auth.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Access token required" });
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        return next();
-    } catch {
-        return res.status(403).json({ error: "Invalid or expired token" });
-    }
-}
 
 async function requireOrganization(req, res) {
     const organization = await User.findById(req.user.id);

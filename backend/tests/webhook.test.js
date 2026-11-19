@@ -11,6 +11,17 @@ jest.unstable_mockModule('@helia/json', () => ({
 
 const request = (await import('supertest')).default;
 const crypto = (await import('crypto')).default;
+
+// server.js validates its configuration as soon as it is imported, so set a complete test configuration first.
+const randomSecret = () => crypto.randomBytes(32).toString('hex');
+process.env.MONGODB_URI ||= 'mongodb://127.0.0.1:27017/kinetic_test';
+process.env.GITHUB_CLIENT_ID = 'test-client-id';
+process.env.GITHUB_CLIENT_SECRET = 'test-client-secret';
+process.env.SESSION_SECRET = randomSecret();
+process.env.JWT_SECRET = randomSecret();
+process.env.DID_SEED_SECRET = randomSecret();
+process.env.GITHUB_WEBHOOK_SECRET = randomSecret();
+
 const app = (await import('../server.js')).default;
 
 describe('SEC-01: GitHub Webhook Signature Verification', () => {

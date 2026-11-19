@@ -60,7 +60,8 @@ async function getHelia() {
  *     DIDs will change and old references will break.
  */
 function deriveSeed(githubId) {
-    const secret = process.env.DID_SEED_SECRET || 'kinetic-did-seed-secret-changeme';
+    const secret = process.env.DID_SEED_SECRET;
+    if (!secret) throw new Error('DID_SEED_SECRET is not configured');
     return new Uint8Array(
         crypto.createHmac('sha256', secret).update(String(githubId)).digest()
     );

@@ -1,7 +1,9 @@
-import 'dotenv/config';
+import './config/loadEnv.js'; // Must stay first: stops startup before any other module runs with bad configuration.
 
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import passport from 'passport';
 import session from 'express-session';
 import connectDB from './config/connectdb.js';
@@ -13,12 +15,15 @@ import contributionRoutes from './routes/contribution.js';
 import kineticRoutes from './routes/kinetic.js';
 import orgRoutes from './routes/repo.js';
 import payoutLifecycleRoutes from './routes/payoutLifecycle.js';
-import repoRoutes from './routes/repo.js';
 import webhookRoutes from './routes/webhook.js';
 import { stopHelia } from './services/didService.js';
 import { ensureAlgorithmVersion } from './services/contributionService.js';
 
-// (env vars loaded via import 'dotenv/config' at top)
+// (env vars loaded and validated by config/loadEnv.js at top)
+
+// ESM __dirname shim
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 connectDB();
 
@@ -31,7 +36,7 @@ const app = express();
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'dev_session_secret',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
   })
@@ -61,17 +66,16 @@ app.use('/api/contribution', contributionRoutes);
 app.use('/api/kinetic', kineticRoutes);
 app.use('/api/org', orgRoutes);
 app.use('/api/org/payouts', payoutLifecycleRoutes);
-app.use('/api/org', repoRoutes);
 app.use('/api/webhook', webhookRoutes);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'Kinetic Backend is healthy' });
+});
+
 // ─── Static frontend ─────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
-// ─── Health / Info ───────────────────────────────────────────
-app.get('/health', (_req, res) => res.send('OK'));
-
+// ─── Info ────────────────────────────────────────────────────
 app.get('/api', (_req, res) => {
     res.json({
         message: 'Kinetic DID Identity API',
@@ -102,5 +106,12 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 export default app;
+
+// ─── Graceful shutdown ───────────────────────────────────────
+async function shutdown(signal) {
+    console.log(`\n${signal} received — shutting down gracefully...`);
+    await stopHelia();
+    process.exit(0);
+}
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));

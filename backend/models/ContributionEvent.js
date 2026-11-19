@@ -28,7 +28,16 @@ const contributionEventSchema = new mongoose.Schema({
     apiUrl: { type: String },   // REST API url used to fetch details
     mergedAt: { type: Date },
 
-    // Commit references (filled from PR details; used by commit-level attribution later)
+    // Merge event: who merged the PR (from the PR details' merged_by). No
+    // default, so an event whose details predate this field has no mergedBy
+    // at all and gets its details fetched once more; null means GitHub
+    // reported no merger.
+    mergedBy: {
+        type: new mongoose.Schema({ login: String, id: Number }, { _id: false }),
+        default: undefined
+    },
+
+    // Commit references (filled from PR details)
     mergeCommitSha: { type: String, default: null },
     headSha: { type: String, default: null },
 
