@@ -11,6 +11,8 @@ import {
     isCIPending,
     hashEvidencePackage,
     ensureContributionEvidence,
+    fetchRepositoryVisibility,
+    clearVisibilityCache,
     EVIDENCE_RECHECK_MS,
     isValidCid
 } from '../services/evidenceService.js';
@@ -352,6 +354,7 @@ describe('ensureContributionEvidence', () => {
         };
         let fetched = 0;
         const out = await ensureContributionEvidence(args(previous), {
+            checkVisibility: async () => true,
             fetchCI: async () => { fetched++; return baseInput().ci; },
             logger: silent
         });
@@ -361,10 +364,86 @@ describe('ensureContributionEvidence', () => {
 
     it('returns null instead of throwing if something unexpected fails', async () => {
         const out = await ensureContributionEvidence(args(), {
+            checkVisibility: async () => true,
             fetchCI: async () => { throw new Error('boom'); },
             logger: silent
         });
         assert.equal(out, null);
+    });
+
+    it('publishes for a public repository', async () => {
+        const recorded = [];
+        const out = await ensureContributionEvidence(args(), {
+            checkVisibility: async () => true,
+            fetchCI: async () => baseInput().ci,
+            record: async input => { recorded.push(input); return 'cid-from-record'; },
+            logger: silent
+        });
+        assert.equal(out, 'cid-from-record');
+        assert.equal(recorded.length, 1);
+    });
+
+    it('does not publish, or read CI, for a private repository', async () => {
+        let fetched = 0;
+        let recorded = 0;
+        const out = await ensureContributionEvidence(args(), {
+            checkVisibility: async () => false,
+            fetchCI: async () => { fetched++; return baseInput().ci; },
+            record: async () => { recorded++; return 'x'; },
+            logger: silent
+        });
+        assert.equal(out, null);
+        assert.equal(fetched, 0);
+        assert.equal(recorded, 0);
+    });
+
+    it('does not publish when visibility cannot be confirmed', async () => {
+        let recorded = 0;
+        const out = await ensureContributionEvidence(args(), {
+            checkVisibility: async () => null,
+            fetchCI: async () => baseInput().ci,
+            record: async () => { recorded++; return 'x'; },
+            logger: silent
+        });
+        assert.equal(out, null);
+        assert.equal(recorded, 0);
+    });
+});
+
+describe('fetchRepositoryVisibility', () => {
+    const respond = (body, ok = true) => async () => ({ ok, json: async () => body });
+
+    it('is true for a public repository', async () => {
+        clearVisibilityCache();
+        assert.equal(await fetchRepositoryVisibility({ repository: 'org/pub', fetchFn: respond({ private: false, visibility: 'public' }) }), true);
+    });
+
+    it('is false for a private or internal repository', async () => {
+        clearVisibilityCache();
+        assert.equal(await fetchRepositoryVisibility({ repository: 'org/priv', fetchFn: respond({ private: true, visibility: 'private' }) }), false);
+        assert.equal(await fetchRepositoryVisibility({ repository: 'org/internal', fetchFn: respond({ private: false, visibility: 'internal' }) }), false);
+    });
+
+    it('is null when GitHub cannot be read or answers unexpectedly', async () => {
+        clearVisibilityCache();
+        assert.equal(await fetchRepositoryVisibility({ repository: 'org/a', fetchFn: respond({}, false) }), null);
+        assert.equal(await fetchRepositoryVisibility({ repository: 'org/b', fetchFn: respond({ nope: 1 }) }), null);
+        assert.equal(await fetchRepositoryVisibility({ repository: 'org/c', fetchFn: async () => { throw new Error('offline'); } }), null);
+    });
+
+    it('caches definite answers but not failures', async () => {
+        clearVisibilityCache();
+        let calls = 0;
+        const counting = body => async () => { calls++; return { ok: true, json: async () => body }; };
+        await fetchRepositoryVisibility({ repository: 'org/cached', fetchFn: counting({ private: false }) });
+        await fetchRepositoryVisibility({ repository: 'org/cached', fetchFn: counting({ private: false }) });
+        assert.equal(calls, 1);
+
+        let failures = 0;
+        const failing = async () => { failures++; return { ok: false }; };
+        await fetchRepositoryVisibility({ repository: 'org/flaky', fetchFn: failing });
+        await fetchRepositoryVisibility({ repository: 'org/flaky', fetchFn: failing });
+        assert.equal(failures, 2);
     });
 });
 

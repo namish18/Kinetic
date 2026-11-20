@@ -7,6 +7,7 @@ import ContributionScore from '../models/ContributionScore.js';
 import ContributionEvent from '../models/ContributionEvent.js';
 import ContributionSyncState from '../models/ContributionSyncState.js';
 import { toPRShape } from '../services/contributionIndex.js';
+import { clearVisibilityCache } from '../services/evidenceService.js';
 import {
     computeContributionScore,
     extractPRMetrics,
@@ -59,6 +60,7 @@ describe('computeContributionScore evidence integration', () => {
     let failScoreWrite;
     let failEvidenceWrite;
     let evidenceLinkResult; // 'ok' | 'nomatch'
+    let repoResponse;       // what GitHub returns for the repository itself
 
     beforeEach(() => {
         db = null;
@@ -66,6 +68,8 @@ describe('computeContributionScore evidence integration', () => {
         failScoreWrite = false;
         failEvidenceWrite = false;
         evidenceLinkResult = 'ok';
+        repoResponse = { status: 200, body: { private: false, visibility: 'public' } };
+        clearVisibilityCache();
         checkRuns = [{ name: 'build', status: 'completed', conclusion: 'success' }];
 
         originals.userFindOne = User.findOne;
@@ -110,6 +114,7 @@ describe('computeContributionScore evidence integration', () => {
             githubCalls.push(String(url));
             const u = String(url);
             if (u.includes('/search/issues')) return Response.json({ items: [], total_count: 0 });
+            if (u.endsWith('/repos/org/repo')) return Response.json(repoResponse.body, { status: repoResponse.status });
             if (u.endsWith('/pulls/7')) return Response.json({ merge_commit_sha: 'abc123' });
             if (u.includes('/check-runs')) return Response.json({ check_runs: checkRuns });
             return new Response('{}', { status: 404 });
@@ -262,5 +267,56 @@ describe('computeContributionScore evidence integration', () => {
         assert.equal(ok.finalScore, failing.finalScore);
         assert.deepEqual(ok.prs, failing.prs);
         assert.equal(ok.reputation, failing.reputation);
+    });
+
+    describe('public evidence only', () => {
+        it('publishes nothing for a private repository, and scoring is unaffected', async () => {
+            repoResponse = { status: 200, body: { private: true, visibility: 'private' } };
+            let stores = 0;
+            const store = async pkg => { stores++; return cidFor(JSON.stringify(pkg)); };
+
+            const out = await computeContributionScore('kiran', 'tok', { evidence: { store, logger: silent } });
+
+            assert.equal(out.finalScore, expectedScore());
+            assert.equal(stores, 0);
+            assert.equal(db.evidenceCID, undefined);
+            assert.equal(ciCalls(), 0);
+        });
+
+        it('publishes nothing when repository visibility cannot be confirmed', async () => {
+            repoResponse = { status: 404, body: { message: 'Not Found' } };
+            let stores = 0;
+            const store = async pkg => { stores++; return cidFor(JSON.stringify(pkg)); };
+
+            const out = await computeContributionScore('kiran', 'tok', { evidence: { store, logger: silent } });
+
+            assert.equal(out.finalScore, expectedScore());
+            assert.equal(stores, 0);
+            assert.equal(db.evidenceCID, undefined);
+        });
+
+        it('publishes on a later run once visibility can be confirmed', async () => {
+            const store = async pkg => cidFor(JSON.stringify(pkg));
+            repoResponse = { status: 403, body: { message: 'rate limited' } };
+            await computeContributionScore('kiran', 'tok', { evidence: { store, logger: silent } });
+            assert.equal(db.evidenceCID, undefined);
+
+            repoResponse = { status: 200, body: { private: false, visibility: 'public' } };
+            await computeContributionScore('kiran', 'tok', { evidence: { store, logger: silent } });
+            assert.ok(db.evidenceCID);
+        });
+
+        it('never puts the GitHub token or an email into the published package', async () => {
+            const stored = [];
+            const store = async pkg => { stored.push(pkg); return cidFor(JSON.stringify(pkg)); };
+            checkRuns = [{ name: 'deploy for dev@example.com', status: 'completed', conclusion: 'success' }];
+
+            await computeContributionScore('kiran', 'ghp_abcdefghijklmnopqrstuvwxyz0123456789', { evidence: { store, logger: silent } });
+
+            const text = JSON.stringify(stored[0]);
+            assert.ok(!text.includes('ghp_'));
+            assert.ok(!text.includes('dev@example.com'));
+            assert.equal(stored[0].ciEvidence.runs[0].name, '[redacted]');
+        });
     });
 });

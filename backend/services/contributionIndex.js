@@ -66,6 +66,7 @@ export function eventFromSearchItem(item, now = new Date()) {
         title: item.title,
         url: item.html_url || item.pull_request?.html_url,
         apiUrl: item.pull_request?.url,
+        ...(item.created_at && { createdAt: new Date(item.created_at) }),
         mergedAt: item.pull_request?.merged_at ? new Date(item.pull_request.merged_at) : null,
         fetchedAt: now
     };
@@ -77,6 +78,8 @@ export function eventFromSearchItem(item, now = new Date()) {
 export function detailsFromPR(pr, now = new Date()) {
     return {
         ...(pr.base?.repo?.full_name && { repo: pr.base.repo.full_name }),
+        createdAt: pr.created_at ? new Date(pr.created_at) : null,
+        mergedBy: pr.merged_by ? { login: pr.merged_by.login, id: pr.merged_by.id } : null,
         mergeCommitSha: pr.merge_commit_sha || null,
         headSha: pr.head?.sha || null,
         stats: {
@@ -102,6 +105,7 @@ export function toPRShape(event) {
         number: event.prNumber,
         title: event.title,
         html_url: event.url,
+        created_at: event.createdAt ? isoSeconds(event.createdAt) : null,
         merged_at: event.mergedAt ? isoSeconds(event.mergedAt) : null,
         base: { repo: { full_name: event.repo } },
         additions: s.additions,
@@ -116,12 +120,88 @@ export function toPRShape(event) {
 }
 
 /**
- * True when an event in a registered repo has no details yet, or was merged
+ * Commit-level attribution of an indexed contribution: repository, pull
+ * request, commit SHA (the merge commit), head SHA, author and merge event.
+ */
+export function attributionFromEvent(event) {
+    return {
+        repo: event.repo,
+        prNumber: event.prNumber ?? null,
+        commitSha: event.mergeCommitSha || null,
+        headSha: event.headSha || null,
+        author: event.author,
+        authorId: event.authorId ?? null,
+        mergedAt: event.mergedAt ? isoSeconds(event.mergedAt) : null,
+        mergedBy: event.mergedBy ? { login: event.mergedBy.login, id: event.mergedBy.id ?? null } : null,
+        ciEvidence: event.ciEvidence || null
+    };
+}
+
+/**
+ * Commits CI may have run on for an indexed PR: its head (PR CI) and its
+ * merge commit (post-merge CI). Empty until the PR's details are fetched.
+ */
+export function expectedShasForEvent(event) {
+    return [
+        { sha: event.headSha, kind: 'head' },
+        { sha: event.mergeCommitSha, kind: 'merge' }
+    ].filter(e => e.sha);
+}
+
+/**
+ * Stores CI evidence on an indexed PR. Only GitHub-confirmed runs that ran on
+ * the PR's own head or merge commit are stored, and an unverified result never
+ * replaces verified evidence. Returns true when the event was updated.
+ */
+export async function recordCiEvidence(Event, { repoKey, prNumber }, evidence, now = new Date()) {
+    if (!evidence?.confirmed || !evidence.matchedCommit) return false;
+    const filter = evidence.verified
+        ? { repoKey, prNumber }
+        : { repoKey, prNumber, 'ciEvidence.verified': { $ne: true } };
+    const result = await Event.updateOne(filter, {
+        $set: {
+            ciEvidence: {
+                runId: evidence.runId,
+                headSha: evidence.headSha,
+                status: evidence.status,
+                conclusion: evidence.conclusion,
+                matchedCommit: evidence.matchedCommit,
+                verified: evidence.verified,
+                reason: evidence.reason,
+                checkedAt: now
+            }
+        }
+    });
+    return (result.modifiedCount ?? result.nModified ?? 0) > 0;
+}
+
+/**
+ * True when details were fetched before merge attribution was stored, i.e.
+ * the event has no mergedBy field at all (detailsFromPR always sets it).
+ */
+export function missingAttribution(event) {
+    return Boolean(event.detailsFetchedAt) && event.mergedBy === undefined;
+}
+
+/**
+ * True when details were fetched before createdAt was stored, i.e. the event
+ * has no createdAt field at all (detailsFromPR always sets it, null when
+ * GitHub has none). Incremental searches and the 14-day refresh never reach
+ * older PRs, so they are fetched once more to backfill it.
+ */
+export function missingCreatedAt(event) {
+    return Boolean(event.detailsFetchedAt) && event.createdAt === undefined;
+}
+
+/**
+ * True when an event in a registered repo has no details yet, has details
+ * without merge attribution or createdAt (fetched once more to backfill
+ * them), or was merged
  * within the refresh window and its details are older than the minimum age.
  */
 export function needsDetails(event, registeredKeys, now = new Date()) {
     if (!registeredKeys.has(event.repoKey)) return false;
-    if (!event.detailsFetchedAt) return true;
+    if (!event.detailsFetchedAt || missingAttribution(event) || missingCreatedAt(event)) return true;
     const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
     const detailsOld = new Date(event.detailsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
     return recentlyMerged && detailsOld;
@@ -290,7 +370,7 @@ export async function syncIndex({
     if (meta.errors.length === 0) {
         const indexed = await Event
             .find({ ...detailFilter, repoKey: { $in: [...registeredKeys] } })
-            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt')
+            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt mergedBy createdAt')
             .lean();
         const targets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
 

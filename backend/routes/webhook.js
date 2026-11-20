@@ -3,6 +3,7 @@ import User from '../models/User.js';
 import { extractPRMetrics, calculatePRScore, getContributorReputation } from '../services/contributionService.js';
 import { proposePayout } from '../services/flowService.js';
 import { verifyWebhookSignature } from '../middleware/verifyWebhookSignature.js';
+import { checkProofOfBuild, commitsForEvent } from '../services/proofOfBuild.js';
 
 const router = express.Router();
 
@@ -49,6 +50,32 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
         console.log(`Webhook: Branch ${targetBranch} is not a target branch for payouts in ${repoFullName}.`);
         return res.status(200).send('Merged to untracked branch');
       }
+
+      // A contribution is scored and paid only if CI passed on its own commit.
+      const proofOfBuild = await checkProofOfBuild({
+        repo: repoFullName,
+        commits: commitsForEvent({
+          headSha: payload.pull_request.head?.sha,
+          mergeCommitSha: payload.pull_request.merge_commit_sha
+        }),
+        token: process.env.GITHUB_PAT
+      });
+
+      if (proofOfBuild.status !== 'verified') {
+        console.log(`Webhook: Not scoring ${contributorUsername}: Proof-of-Build ${proofOfBuild.status} (${proofOfBuild.reason}).`);
+        return res.status(200).json({
+          success: true,
+          message: 'Not scored: no Proof-of-Build for this contribution',
+          score: 0,
+          payout: 0,
+          contributor: contributorUsername,
+          flowStatus: 'skipped',
+          transactionId: null,
+          proofOfBuild
+        });
+      }
+
+      console.log(`Webhook: Target branch matched! Calculating payout algorithm using org weights...`);
 
             // Calculate payout based on true PR dimensions
             const prMetrics = extractPRMetrics(payload.pull_request);
@@ -107,47 +134,6 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
             } else {
                 console.log(`Webhook: Skipped execution (Tokens <= 0 or Contributor wallet not linked).`);
             }
-      console.log(`Webhook: Target branch matched! Calculating payout algorithm using org weights...`);
-
-      // Calculate payout based on true PR dimensions
-      const prMetrics = extractPRMetrics(payload.pull_request);
-      
-      // Execute algorithm from contribution_algo.md
-      const result = calculatePRScore(prMetrics, repoConfig.weights, { 
-        reputation: 100 // TODO: fetch real contributor reputation from DB
-      });
-
-      // Scale score to display range
-      const finalScore = result.score ? Math.round(result.score * 100) : 0;
-      
-      // Payout calculation parameters
-      const FLOW_PER_POINT = 0.1;
-      const MAX_FLOW_PER_PR = 10.0;
-      const estPayoutFlow = Math.min(MAX_FLOW_PER_PR, Math.round(result.score * FLOW_PER_POINT * 1000) / 1000);
-      
-      console.log(`Webhook: Payout calculated for ${contributorUsername} -> Score: ${finalScore}, Est payout: ${estPayoutFlow} FLOW\n`);
-
-      let flowTxStatus = "skipped";
-      let flowTxId = null;
-
-      // Retrieve the contributor's wallet
-      const contributorUser = await User.findOne({ github: contributorUsername });
-      
-      if (estPayoutFlow > 0 && contributorUser?.wallet) {
-        console.log(`Webhook: Proposing smart contract payout to contributor's wallet ${contributorUser.wallet}...`);
-        const txResult = await proposePayout(contributorUser.wallet, estPayoutFlow);
-        
-        if (txResult.success) {
-          flowTxStatus = "success";
-          flowTxId = txResult.transactionId;
-          console.log(`Webhook: Successfully proposed transaction (ID: ${flowTxId})`);
-        } else {
-          flowTxStatus = "failed";
-          console.log(`Webhook: Failed to execute Flow transaction:`, txResult.error);
-        }
-      } else {
-        console.log(`Webhook: Skipped execution (Tokens <= 0 or Contributor wallet not linked).`);
-      }
 
       return res.status(200).json({ 
         success: true, 
@@ -156,7 +142,8 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
         payout: estPayoutFlow,
         contributor: contributorUsername,
         flowStatus: flowTxStatus,
-        transactionId: flowTxId
+        transactionId: flowTxId,
+        proofOfBuild
       });
     }
 

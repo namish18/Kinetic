@@ -99,20 +99,25 @@ access(all) contract KineticPayout {
             return record.id
         }
 
-        access(all) fun approvePayout(id: UInt64, signer: Address) {
-            pre {
-                self.payouts[id] != nil: "Payout ID not found"
-                !self.payouts[id]!.isExecuted(): "Already executed"
-                self.authorizedSigners.contains(signer): "Not an authorized signer"
-            }
-            
-            let record = self.payouts[id]!
-            if !record.approvals.contains(signer) {
-                record.approvals.append(signer)
-                self.payouts[id] = record
-                emit PayoutApproved(id: id, signer: signer)
-            }
-        }
+        access(all) fun approvePayout(
+    id: UInt64,
+    signer: auth(BorrowValue) &Account
+) {
+    let signerAddress = signer.address
+
+    pre {
+        self.payouts[id] != nil: "Payout ID not found"
+        !self.payouts[id]!.isExecuted(): "Already executed"
+        self.authorizedSigners.contains(signerAddress): "Not an authorized signer"
+    }
+
+    let record = self.payouts[id]!
+    if !record.approvals.contains(signerAddress) {
+        record.approvals.append(signerAddress)
+        self.payouts[id] = record
+        emit PayoutApproved(id: id, signer: signerAddress)
+    }
+}
 
         access(all) fun executePayout(id: UInt64) {
             pre {
