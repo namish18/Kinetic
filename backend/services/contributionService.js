@@ -9,7 +9,7 @@ import User from '../models/User.js';
 import { calculateSpamPenalty } from './kineticMechanisms.js';
 import AlgorithmVersion from '../models/AlgorithmVersion.js';
 import ContributionScore from '../models/ContributionScore.js';
-import { ensureContributionEvidence } from './evidenceService.js';
+import { ensureContributionEvidence, getEvidenceCIDs, evidenceKey } from './evidenceService.js';
 import { createContributionEvidence } from './contributionEvidenceService.js';
 import ContributionEvent from '../models/ContributionEvent.js';
 import {
@@ -819,7 +819,7 @@ export async function computeOrgContributors(orgId, token) {
                     repo: pr.repoFullName,
                     score: Math.round(prScore * 10) / 10,
                     timestamp: pr.prData.merged_at,
-                    cid: `bafybei${Math.random().toString(16).substring(2, 10)}`,
+                    prNumber: pr.prData.number,
                     ...pr.attribution
                 });
             }
@@ -833,11 +833,19 @@ export async function computeOrgContributors(orgId, token) {
             )
         }));
 
+        // Attach the real IPFS evidence CID where one is stored; otherwise null.
+        // A CID is never generated here.
+        const latestEvents = recentEvents.slice(0, 10);
+        const evidenceCIDs = await getEvidenceCIDs(latestEvents.map(e => ({ username: e.username, repository: e.repo, prNumber: e.prNumber })));
+
         return {
             contributors: contributors.sort(
                 (a, b) => b.totalScore - a.totalScore
             ),
-            recentEvents: recentEvents.slice(0, 10),
+            recentEvents: latestEvents.map(({ prNumber, ...event }) => ({
+                ...event,
+                cid: evidenceCIDs.get(evidenceKey({ username: event.username, repository: event.repo, prNumber })) ?? null
+            })),
             meta
         };
 
