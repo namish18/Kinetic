@@ -1,4 +1,5 @@
-import './config/loadEnv.js'; // Must stay first: stops startup before any other module runs with bad configuration.
+
+import './config/loadEnv.js'; // Must stay first: validates configuration before other modules load.
 
 import express from 'express';
 import cors from 'cors';
@@ -14,53 +15,56 @@ import authRoutes from './routes/auth.js';
 import contributionRoutes from './routes/contribution.js';
 import kineticRoutes from './routes/kinetic.js';
 import orgRoutes from './routes/repo.js';
+import fundingEpochRoutes from './routes/fundingEpoch.js';
 import payoutLifecycleRoutes from './routes/payoutLifecycle.js';
 import webhookRoutes from './routes/webhook.js';
+
 import { stopHelia } from './services/didService.js';
 import { ensureAlgorithmVersion } from './services/contributionService.js';
 
-// (env vars loaded and validated by config/loadEnv.js at top)
+// Environment variables are loaded and validated by config/loadEnv.js.
 
-// ESM __dirname shim
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 connectDB();
 
-// Seed the active scoring algorithm version
+// Seed the active scoring algorithm version.
 ensureAlgorithmVersion()
-    .then(v => console.log(`🧮 Algorithm version active: ${v.version}`))
+    .then(v => console.log(`Algorithm version active: ${v.version}`))
     .catch(e => console.error('Algorithm version seed failed:', e.message));
 
 const app = express();
 
 app.use(
-  session({
-    secret: process.env.SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-  })
+    session({
+        secret: process.env.SESSION_SECRET,
+        resave: false,
+        saveUninitialized: false,
+    })
 );
 
 app.use(
-  express.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf;
-    },
-  })
+    express.json({
+        verify: (req, res, buf) => {
+            req.rawBody = buf;
+        },
+    })
 );
 
 app.use(express.urlencoded({ extended: true }));
+
 app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true,
-  })
+    cors({
+        origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+        credentials: true,
+    })
 );
 
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.use('/api/org/funding-epochs', fundingEpochRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/contribution', contributionRoutes);
 app.use('/api/kinetic', kineticRoutes);
@@ -69,13 +73,16 @@ app.use('/api/org/payouts', payoutLifecycleRoutes);
 app.use('/api/webhook', webhookRoutes);
 
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', message: 'Kinetic Backend is healthy' });
+    res.status(200).json({
+        status: 'ok',
+        message: 'Kinetic Backend is healthy',
+    });
 });
 
-// ─── Static frontend ─────────────────────────────────────────
+// Static frontend
 app.use(express.static(path.join(__dirname, '..', 'frontend')));
 
-// ─── Info ────────────────────────────────────────────────────
+// API information
 app.get('/api', (_req, res) => {
     res.json({
         message: 'Kinetic DID Identity API',
@@ -98,20 +105,23 @@ app.get('/api', (_req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-// Only start the HTTP listener if server.js is executed directly (prevents port conflicts during jest testing)
+// Only start the HTTP listener when server.js is executed directly.
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
-    console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-  });
+    app.listen(PORT, () => {
+        console.log(
+            `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
+        );
+    });
 }
 
 export default app;
 
-// ─── Graceful shutdown ───────────────────────────────────────
+// Graceful shutdown
 async function shutdown(signal) {
     console.log(`\n${signal} received — shutting down gracefully...`);
     await stopHelia();
     process.exit(0);
 }
+
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
