@@ -10,6 +10,7 @@ import { calculateSpamPenalty } from './kineticMechanisms.js';
 import AlgorithmVersion from '../models/AlgorithmVersion.js';
 import ContributionScore from '../models/ContributionScore.js';
 import { ensureContributionEvidence } from './evidenceService.js';
+import { createContributionEvidence } from './contributionEvidenceService.js';
 import ContributionEvent from '../models/ContributionEvent.js';
 import {
     syncIndex,
@@ -527,6 +528,38 @@ export async function computeContributionScore(username, token, options = {}) {
             const previousScore = await ContributionScore.findOne(scoreKey).select('score algorithmVersion evidenceCID evidenceDigest evidencePending evidenceCheckedAt').lean().catch(() => null);
 
             // ── Persist score with algorithm version + config snapshot ──
+            const scoringInputs = {
+                metrics: record.metrics,
+                reputation: contributorReputation,
+                timestamps: prTimestamps.slice(0, record.timestampCount)
+            };
+            const configurationSnapshot = {
+                algorithm: getAlgorithmConfiguration(),
+                weights: result.details?.weights || record.weights || getAlgorithmConfiguration().defaultWeights,
+                repoConfig: record.repoConfig
+                    ? {
+                        name: record.repoConfig.name,
+                        weights: record.repoConfig.weights,
+                        bountyPool: record.repoConfig.bountyPool
+                    }
+                    : null,
+            };
+
+            let evidence = null;
+            try {
+                evidence = await createContributionEvidence({
+                    algorithmVersion: ALGORITHM_VERSION,
+                    scoringInputs,
+                    configurationSnapshot,
+                    score: prPoints
+                });
+            } catch (err) {
+                console.error(
+                    `Failed to generate contribution evidence for PR #${record.prData.number}:`,
+                    err.message
+                );
+            }
+
             let scorePersisted = false;
             try {
                 await ContributionScore.findOneAndUpdate(
@@ -535,17 +568,12 @@ export async function computeContributionScore(username, token, options = {}) {
                         $set: {
                             score: prPoints,
                             algorithmVersion: ALGORITHM_VERSION,
-                            configurationSnapshot: {
-                                algorithm: getAlgorithmConfiguration(),
-                                weights: result.details?.weights || record.weights || getAlgorithmConfiguration().defaultWeights,
-                                repoConfig: record.repoConfig
-                                    ? {
-                                        name: record.repoConfig.name,
-                                        weights: record.repoConfig.weights,
-                                        bountyPool: record.repoConfig.bountyPool
-                                    }
-                                    : null,
-                            },
+                            configurationSnapshot,
+                            ...(evidence && {
+                                evidenceReference: evidence.reference,
+                                evidenceHash: evidence.evidenceHash,
+                                evidenceSchemaVersion: evidence.schemaVersion
+                            }),
                             calculatedAt: new Date()
                         }
                     },
