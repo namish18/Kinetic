@@ -26,11 +26,40 @@ const contributionEventSchema = new mongoose.Schema({
     title: { type: String },
     url: { type: String },      // html_url
     apiUrl: { type: String },   // REST API url used to fetch details
+    // PR opened (created_at), used by the velocity penalty. No default, so an
+    // event whose details predate this field gets them fetched once more;
+    // null means GitHub reported none.
+    createdAt: { type: Date },
     mergedAt: { type: Date },
 
-    // Commit references (filled from PR details; used by commit-level attribution later)
+    // Merge event: who merged the PR (from the PR details' merged_by). No
+    // default, so an event whose details predate this field has no mergedBy
+    // at all and gets its details fetched once more; null means GitHub
+    // reported no merger.
+    mergedBy: {
+        type: new mongoose.Schema({ login: String, id: Number }, { _id: false }),
+        default: undefined
+    },
+
+    // Commit references (filled from PR details)
     mergeCommitSha: { type: String, default: null },
     headSha: { type: String, default: null },
+
+    // CI evidence: the latest GitHub-confirmed workflow run that ran on this
+    // PR's head or merge commit (written by GET /api/kinetic/proof-of-build?pr=)
+    ciEvidence: {
+        type: new mongoose.Schema({
+            runId: Number,
+            headSha: String,
+            status: String,
+            conclusion: String,
+            matchedCommit: { sha: String, kind: String },
+            verified: Boolean,
+            reason: String,
+            checkedAt: Date
+        }, { _id: false }),
+        default: undefined
+    },
 
     // Raw PR fields needed by extractPRMetrics()
     stats: {
@@ -42,6 +71,19 @@ const contributionEventSchema = new mongoose.Schema({
         reviewComments: { type: Number },
         merged: { type: Boolean },
         labels: [{ type: String }]
+    },
+
+    // Latest CI verdict for this PR's own commits. No default, so an event that
+    // has not been checked has no verdict at all. 'verified' is final.
+    proofOfBuild: {
+        type: new mongoose.Schema({
+            status: String,     // 'verified' | 'failed' | 'pending' | 'none'
+            runId: Number,      // the run that proved it (verified only)
+            sha: String,        // the commit it ran on (verified only)
+            kind: String,       // 'head' | 'merge' (verified only)
+            checkedAt: Date
+        }, { _id: false }),
+        default: undefined
     },
 
     fetchedAt: { type: Date },                         // last seen in a search result
