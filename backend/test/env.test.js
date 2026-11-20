@@ -208,8 +208,11 @@ describe('validateEnv: Flow is optional but must be coherent', () => {
     it('starts without Flow and warns that payouts are unavailable', () => {
         const { errors, warnings } = validateEnv(validEnv());
         assert.deepEqual(errors, []);
-        assert.equal(warnings.length, 1);
-        assert.match(warnings[0], /FLOW_PRIVATE_KEY/);
+        assert.ok(warnings.some((warning) => /FLOW_PRIVATE_KEY/.test(warning)));
+    });
+
+    it('warns that contributions cannot be scored without a GitHub token', () => {
+        assert.ok(validateEnv(validEnv()).warnings.some((warning) => /GITHUB_PAT/.test(warning)));
     });
 
     it('allows the read-only mode flowService supports: an address with no key', () => {
@@ -217,7 +220,8 @@ describe('validateEnv: Flow is optional but must be coherent', () => {
     });
 
     it('does not warn when a private key is configured', () => {
-        assert.deepEqual(validateEnv(validEnv({ FLOW_ADDRESS, FLOW_PRIVATE_KEY: FLOW_KEY })).warnings, []);
+        const configured = validEnv({ FLOW_ADDRESS, FLOW_PRIVATE_KEY: FLOW_KEY, GITHUB_PAT: 'ghp_0123456789abcdefghijklmnopqrstuvwxyz' });
+        assert.deepEqual(validateEnv(configured).warnings, []);
     });
 
     it('rejects a private key or contract with no address', () => {
