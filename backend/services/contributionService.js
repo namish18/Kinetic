@@ -6,6 +6,10 @@
  */
 
 import User from '../models/User.js';
+import { calculateSpamPenalty } from './kineticMechanisms.js';
+import AlgorithmVersion from '../models/AlgorithmVersion.js';
+import ContributionScore from '../models/ContributionScore.js';
+import { ensureContributionEvidence } from './evidenceService.js';
 import ContributionEvent from '../models/ContributionEvent.js';
 import {
     syncIndex,
@@ -34,14 +38,6 @@ function indexMeta(sync) {
         cursorsAdvanced: sync.cursorsAdvanced
     };
 }
-import {
-    fetchAllSearchResults,
-    fetchPRDetails,
-    repoFullNameFromUrl
-} from './githubSearch.js';
-import { calculateSpamPenalty } from './kineticMechanisms.js';
-import AlgorithmVersion from '../models/AlgorithmVersion.js';
-import ContributionScore from '../models/ContributionScore.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
@@ -436,6 +432,7 @@ export async function computeContributionScore(username, token, options = {}) {
             return {
                 username,
                 finalScore: 0,
+                algorithmVersion: ALGORITHM_VERSION,
                 reputation: 0,
                 prs: [],
                 meta: {
@@ -484,7 +481,6 @@ export async function computeContributionScore(username, token, options = {}) {
         const prDetails = [];
 
         // Score and persist each PR using the existing MSTS algorithm.
-                 // Score and persist each PR using the existing MSTS algorithm.
         for (const record of validPRRecords) {
             const result = calculatePRScore(
                 record.metrics,
@@ -499,39 +495,57 @@ export async function computeContributionScore(username, token, options = {}) {
 
             totalPoints += prPoints;
 
+            const scoreKey = { username, repository: record.repoFullName, prNumber: record.prData.number };
+            const previousScore = await ContributionScore.findOne(scoreKey).select('score algorithmVersion evidenceCID evidenceDigest evidencePending evidenceCheckedAt').lean().catch(() => null);
+
+            // ── Persist score with algorithm version + config snapshot ──
+            let scorePersisted = false;
             try {
                 await ContributionScore.findOneAndUpdate(
-                    {
-                        username,
-                        repository: record.repoFullName,
-                        prNumber: record.prData.number
-                    },
+                    scoreKey,
                     {
                         $set: {
                             score: prPoints,
                             algorithmVersion: ALGORITHM_VERSION,
                             configurationSnapshot: {
                                 algorithm: getAlgorithmConfiguration(),
-                                weights:
-                                    result.details?.weights ||
-                                    record.weights ||
-                                    getAlgorithmConfiguration().defaultWeights,
-                                repoConfig: {
-                                    name: record.repoConfig.name,
-                                    weights: record.repoConfig.weights,
-                                    bountyPool: record.repoConfig.bountyPool
-                                }
+                                weights: result.details?.weights || record.weights || getAlgorithmConfiguration().defaultWeights,
+                                repoConfig: record.repoConfig
+                                    ? {
+                                        name: record.repoConfig.name,
+                                        weights: record.repoConfig.weights,
+                                        bountyPool: record.repoConfig.bountyPool
+                                    }
+                                    : null,
                             },
                             calculatedAt: new Date()
                         }
                     },
                     { upsert: true, new: true }
                 );
+                scorePersisted = true;
             } catch (dbErr) {
                 console.error(
                     'Failed to persist contribution score:',
                     dbErr.message
                 );
+            }
+
+            // Store the evidence package on IPFS and link its CID to this contribution.
+            // Skipped when the score itself could not be saved, since there is nothing to link to.
+            if (scorePersisted) {
+                await ensureContributionEvidence({
+                    contribution: {
+                        ...scoreKey,
+                        prUrl: record.prData.html_url,
+                        mergedAt: record.prData.merged_at
+                    },
+                    scoreInputs: { ...record.metrics, reputation: contributorReputation, weights: result.details?.weights },
+                    score: prPoints,
+                    algorithm: { name: ALGORITHM_NAME, version: ALGORITHM_VERSION },
+                    previous: previousScore,
+                    token: githubToken
+                }, options.evidence);
             }
 
             prDetails.push({
@@ -568,9 +582,9 @@ export async function computeContributionScore(username, token, options = {}) {
         return {
             username,
             finalScore,
+            algorithmVersion: ALGORITHM_VERSION,
             reputation: contributorReputation,
             reputationEvidence: repEvidence,
-            algorithmVersion: ALGORITHM_VERSION,
             prs: prDetails,
             meta: {
                 computeTimeMs:
@@ -657,7 +671,6 @@ export async function computeOrgContributors(orgId, token) {
         for (const event of events) {
             const username = event.author;
             if (!username) continue;
-
             const prData = toPRShape(event);
             const repoConfig = org.repositories.find(
                 repo => repo.name.toLowerCase() === event.repoKey

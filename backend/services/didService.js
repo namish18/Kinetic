@@ -222,5 +222,6 @@ export {
     buildIdentityDocument,
     uploadToIPFS,
     getFromIPFS,
+    getHelia,
     stopHelia,
 };
