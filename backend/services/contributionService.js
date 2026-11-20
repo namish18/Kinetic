@@ -38,6 +38,15 @@ function indexMeta(sync) {
         cursorsAdvanced: sync.cursorsAdvanced
     };
 }
+import {
+    fetchAllSearchResults,
+    fetchPRDetails,
+    repoFullNameFromUrl
+} from './githubSearch.js';
+import { calculateSpamPenalty } from './kineticMechanisms.js';
+import AlgorithmVersion from '../models/AlgorithmVersion.js';
+import ContributionScore from '../models/ContributionScore.js';
+import { isProofVerified, refreshProofOfBuild, summarizeProof } from './proofOfBuild.js';
 
 const MAX_LINES = 10000;
 const REPUTATION_INFLUENCE_LAMBDA = 0.5;
@@ -366,13 +375,16 @@ export async function computeContributionScore(username, token, options = {}) {
             headers
         });
 
-        // Read indexed PR events.
-        const events = await ContributionEvent.find({
+        const scoringFilter = {
             authorKey,
             type: 'pr_merge',
             repoKey: { $in: [...registeredKeys] },
             detailsFetchedAt: { $ne: null }
-        }).sort({ mergedAt: -1 }).lean();
+        };
+        const proofRefresh = await refreshProofOfBuild({ filter: scoringFilter, token: githubToken });
+
+        const events = await ContributionEvent.find(scoringFilter).sort({ mergedAt: -1 }).lean();
+        const proofMeta = { ...summarizeProof(events), ...proofRefresh };
 
         if (events.length === 0) {
             return {
@@ -391,13 +403,14 @@ export async function computeContributionScore(username, token, options = {}) {
             };
         }
 
-
         const validPRRecords = [];
         const prTimestamps = [];
+        const unverifiedPrs = [];
 
         // Prepare PR records for MSTS scoring.
         for (const event of events) {
             const prData = toPRShape(event);
+            const repoFullName = event.repo;
             const repoKey = event.repoKey;
 
             const repoConfig = registeredRepoMap[repoKey];
@@ -410,16 +423,28 @@ export async function computeContributionScore(username, token, options = {}) {
                 prTimestamps.push(prData.merged_at);
             }
 
+            // No Proof-of-Build, no score or reputation. It still counts above as a submission for the spam penalty.
+            if (!isProofVerified(event)) {
+                unverifiedPrs.push({
+                    id: prData.number,
+                    repo: repoFullName,
+                    link: prData.html_url,
+                    proofOfBuild: event.proofOfBuild?.status ?? 'unchecked'
+                });
+                continue;
+            }
+
             const weights = repoConfig.weights || null;
             const repWeights =
                 options.reputationWeights || repoConfig.reputationWeights;
 
             const metrics = extractPRMetrics(prData);
 
-                     validPRRecords.push({
+            validPRRecords.push({
                 prData,
                 attribution: attributionFromEvent(event),
-                repoFullName: event.repo,
+                proofOfBuild: event.proofOfBuild,
+                repoFullName,
                 repoConfig,
                 weights,
                 repWeights,
@@ -435,10 +460,13 @@ export async function computeContributionScore(username, token, options = {}) {
                 algorithmVersion: ALGORITHM_VERSION,
                 reputation: 0,
                 prs: [],
+                unverifiedPrs,
                 meta: {
+                    computeTimeMs: Date.now() - (options.startTime || Date.now()),
                     prCount: 0,
                     source: 'index',
-                    ...indexMeta(sync)
+                    ...indexMeta(sync),
+                    proofOfBuild: proofMeta
                 }
             };
         }
@@ -557,6 +585,7 @@ export async function computeContributionScore(username, token, options = {}) {
                 status: 'merged',
                 date: record.prData.merged_at?.split('T')[0] || 'N/A',
                 link: record.prData.html_url,
+                proofOfBuild: record.proofOfBuild,
                 ...record.attribution
             });
         }
@@ -586,12 +615,14 @@ export async function computeContributionScore(username, token, options = {}) {
             reputation: contributorReputation,
             reputationEvidence: repEvidence,
             prs: prDetails,
+            unverifiedPrs,
             meta: {
                 computeTimeMs:
                     Date.now() - (options.startTime || Date.now()),
                 prCount: prDetails.length,
                 source: 'index',
-                ...indexMeta(sync)
+                ...indexMeta(sync),
+                proofOfBuild: proofMeta
             }
         };
 
@@ -647,21 +678,22 @@ export async function computeOrgContributors(orgId, token) {
             headers
         });
 
-        const events = await ContributionEvent.find({
+        const scoringFilter = {
             type: 'pr_merge',
             repoKey: { $in: [...repoKeys] },
             detailsFetchedAt: { $ne: null }
-        }).sort({ mergedAt: -1 }).lean();
+        };
+        const proofRefresh = await refreshProofOfBuild({ filter: scoringFilter, token: githubToken });
+
+        const events = await ContributionEvent.find(scoringFilter).sort({ mergedAt: -1 }).lean();
 
         const meta = {
             source: 'index',
             eventCount: events.length,
-            ...indexMeta(sync)
+            ...indexMeta(sync),
+            proofOfBuild: { ...summarizeProof(events), ...proofRefresh }
         };
-
-        if (events.length === 0) {
-            return { contributors: [], recentEvents: [], meta };
-        }
+        if (events.length === 0) return { contributors: [], recentEvents: [], meta };
 
         const contributorsMap = {};
         const recentEvents = [];
@@ -669,6 +701,8 @@ export async function computeOrgContributors(orgId, token) {
 
         // Group indexed PRs by contributor.
         for (const event of events) {
+            if (!isProofVerified(event)) continue;
+
             const username = event.author;
             if (!username) continue;
             const prData = toPRShape(event);

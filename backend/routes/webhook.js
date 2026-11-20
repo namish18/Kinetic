@@ -3,6 +3,7 @@ import User from '../models/User.js';
 import { extractPRMetrics, calculatePRScore, getContributorReputation } from '../services/contributionService.js';
 import { proposePayout } from '../services/flowService.js';
 import { verifyWebhookSignature } from '../middleware/verifyWebhookSignature.js';
+import { checkProofOfBuild, commitsForEvent } from '../services/proofOfBuild.js';
 
 const router = express.Router();
 
@@ -48,6 +49,30 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
       if (!repoConfig.targetBranches.includes(targetBranch)) {
         console.log(`Webhook: Branch ${targetBranch} is not a target branch for payouts in ${repoFullName}.`);
         return res.status(200).send('Merged to untracked branch');
+      }
+
+      // A contribution is scored and paid only if CI passed on its own commit.
+      const proofOfBuild = await checkProofOfBuild({
+        repo: repoFullName,
+        commits: commitsForEvent({
+          headSha: payload.pull_request.head?.sha,
+          mergeCommitSha: payload.pull_request.merge_commit_sha
+        }),
+        token: process.env.GITHUB_PAT
+      });
+
+      if (proofOfBuild.status !== 'verified') {
+        console.log(`Webhook: Not scoring ${contributorUsername}: Proof-of-Build ${proofOfBuild.status} (${proofOfBuild.reason}).`);
+        return res.status(200).json({
+          success: true,
+          message: 'Not scored: no Proof-of-Build for this contribution',
+          score: 0,
+          payout: 0,
+          contributor: contributorUsername,
+          flowStatus: 'skipped',
+          transactionId: null,
+          proofOfBuild
+        });
       }
 
       console.log(`Webhook: Target branch matched! Calculating payout algorithm using org weights...`);
@@ -117,7 +142,8 @@ router.post('/github', verifyWebhookSignature, async (req, res) => {
         payout: estPayoutFlow,
         contributor: contributorUsername,
         flowStatus: flowTxStatus,
-        transactionId: flowTxId
+        transactionId: flowTxId,
+        proofOfBuild
       });
     }
 

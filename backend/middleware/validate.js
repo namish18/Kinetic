@@ -486,7 +486,7 @@ export function validateRepoConfig(req, res, next) {
  * Used on GET /api/kinetic/proof-of-build?repo=owner/repo&runId=123
  */
 export function validateProofOfBuild(req, res, next) {
-    const { repo, runId } = req.query;
+    const { repo, runId, sha, pr } = req.query;
     const errors = [];
 
     if (!repo || typeof repo !== 'string' || repo.trim().length === 0) {
@@ -513,11 +513,27 @@ export function validateProofOfBuild(req, res, next) {
         });
     }
 
+    if (sha !== undefined && (typeof sha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(sha.trim()))) {
+        errors.push({
+            field: 'sha',
+            message: "'sha' must be a commit SHA of 7-40 hexadecimal characters."
+        });
+    }
+
+    if (pr !== undefined && (typeof pr !== 'string' || !/^[1-9]\d*$/.test(pr.trim()))) {
+        errors.push({
+            field: 'pr',
+            message: "'pr' must be a positive integer pull request number."
+        });
+    }
+
     if (errors.length > 0) {
         return sendValidationError(res, errors);
     }
 
     req.normalizedRepo = normalizeRepoName(repo);
+    if (sha !== undefined) req.expectedSha = sha.trim().toLowerCase();
+    if (pr !== undefined) req.prNumber = Number(pr.trim());
     next();
 }
 
