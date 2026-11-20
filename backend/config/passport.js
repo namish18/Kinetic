@@ -1,22 +1,23 @@
 /**
  * Passport GitHub OAuth Strategy
  *
- * SEC-04 Fix:
- * 1. Existing users retain their database role and cannot be overwritten via session/query inputs.
- * 2. New users strictly default to the 'contributor' role.
- * 3. Preserves Ed25519 DID generation and IPFS publishing pipeline.
+ * Contributor-Controlled Identity (DID-01):
+ * On first login:
+ *  1. Creates user account in MongoDB bound to GitHub profile
+ *  2. Contributor retains exclusive control over private keys; server does NOT
+ *     generate or derive contributor private keys.
+ *  3. Contributor subsequently registers their client-generated DID key via
+ *     POST /api/auth/register-did with cryptographic proof of possession.
+ *
+ * Returning users are looked up by githubId — no re-processing needed.
  */
 
+// ⚠️  MUST be first: loads .env before GitHubStrategy reads process.env
 import 'dotenv/config';
 
 import passport from 'passport';
 import { Strategy as GitHubStrategy } from 'passport-github2';
 import User from '../models/User.js';
-import {
-    authenticateDID,
-    buildIdentityDocument,
-    uploadToIPFS,
-} from '../services/didService.js';
 
 passport.serializeUser((user, done) => {
     done(null, user.id);
@@ -40,49 +41,45 @@ passport.use(
                 process.env.GITHUB_CALLBACK_URL ||
                 'http://localhost:5000/api/auth/github/callback',
             scope: ['user:email'],
-            passReqToCallback: true,
+            passReqToCallback: true,  // ← gives us access to req.session inside the verify fn
         },
         async (req, accessToken, refreshToken, profile, done) => {
             try {
+                // Role comes from the session set in GET /api/auth/github?role=…
+                const sessionRole = req.session?.role || 'contributor';
+
                 // ── Returning user ──────────────────────────────────────────
                 let user = await User.findOne({ githubId: profile.id });
                 if (user) {
-                    // SEC-04 FIX: Ignore untrusted sessionRole updates and preserve existing DB role
-                    console.log(`✅ Existing user logged in: @${user.github} | Role: ${user.role} | DID: ${user.did}`);
+                    // Allow role upgrade if they explicitly re-authenticated with a different role
+                    if (sessionRole && user.role !== sessionRole) {
+                        user = await User.findByIdAndUpdate(
+                            user._id,
+                            { role: sessionRole },
+                            { new: true }
+                        );
+                        console.log(`🔄 Existing user @${user.github} role updated → ${sessionRole}`);
+                    } else {
+                        console.log(`✅ Existing user: @${user.github}  DID: ${user.did}`);
+                    }
                     return done(null, user);
                 }
 
-                // ── New user: full DID + IPFS flow ──────────────────────────
-                console.log(`\n🆕 New user: @${profile.username} — running DID + IPFS pipeline`);
+                // ── New user: create record without server-derived private keys (DID-01) ──
+                console.log(`\n🆕 New user: @${profile.username} — created under Contributor-Controlled Identity`);
 
-                // Step 1 & 2: Generate did:key from Ed25519 keypair
-                const { didString, didDocument } = authenticateDID(profile.id);
-                console.log(`   🔑 did:key: ${didString}`);
-
-                // Step 3: Build enriched identity document
-                const identityDoc = buildIdentityDocument(profile, didString, didDocument);
-                console.log(`   📄 Identity document built`);
-
-                // Step 4: Upload to IPFS
-                const ipfsCID = await uploadToIPFS(identityDoc);
-                console.log(`   📌 Stored on IPFS — CID: ${ipfsCID}`);
-
-                // SEC-04 FIX: Always assign default 'contributor' role to new OAuth users
-                const defaultRole = 'contributor';
-
-                // Step 5: Persist in MongoDB with safe default role
                 user = await User.create({
                     githubId: profile.id,
                     github: profile.username,
                     displayName: profile.displayName || profile.username,
                     email: profile.emails?.[0]?.value || null,
                     avatarUrl: profile.photos?.[0]?.value || null,
-                    did: didString,
-                    ipfsCID,
-                    didDocument: identityDoc,
-                    role: defaultRole,
+                    did: null,
+                    ipfsCID: null,
+                    didDocument: null,
+                    role: sessionRole,
                 });
-                console.log(`   ✅ MongoDB record created for @${user.github} with role: ${defaultRole}\n`);
+                console.log(`   ✅ MongoDB record created for @${user.github} as ${sessionRole} (DID pending contributor registration)\n`);
 
                 return done(null, user);
             } catch (error) {
