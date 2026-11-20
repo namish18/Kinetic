@@ -17,7 +17,10 @@ import {
     validateUpdateBranches,
     validateRepoConfig,
     validateProofOfBuild,
-    validateQuadraticFunding
+    validateQuadraticFunding,
+    isValidEd25519PublicKey,
+    isValidEd25519Signature,
+    validateRegisterDID
 } from '../middleware/validate.js';
 
 // Helper to mock Express req, res, next
@@ -437,4 +440,64 @@ describe('6. Kinetic Mechanism Payloads (Proof-of-Build & Quadratic Funding)', (
         assert.equal(validHttp.wasNextCalled(), true);
     });
 });
+
+describe('7. Contributor DID Registration Payload Validation (DID-01)', () => {
+    const validPubKey = 'a'.repeat(64);
+    const validSig = 'b'.repeat(128);
+    const validMsg = 'Challenge non-empty string';
+
+    it('validates Ed25519 public key and signature formats', () => {
+        assert.equal(isValidEd25519PublicKey(validPubKey), true);
+        assert.equal(isValidEd25519PublicKey('0x' + validPubKey), true);
+        assert.equal(isValidEd25519PublicKey('shortKey'), false);
+        assert.equal(isValidEd25519PublicKey(null), false);
+        assert.equal(isValidEd25519PublicKey(12345), false);
+
+        assert.equal(isValidEd25519Signature(validSig), true);
+        assert.equal(isValidEd25519Signature('0x' + validSig), true);
+        assert.equal(isValidEd25519Signature('invalidSig'), false);
+        assert.equal(isValidEd25519Signature(null), false);
+    });
+
+    it('middleware: rejects non-object or missing required fields with 400', () => {
+        const notObj = createMockHttp({ body: 'not-an-object' });
+        validateRegisterDID(notObj.req, notObj.res, notObj.next);
+        assert.equal(notObj.getStatus(), 400);
+
+        const missingAll = createMockHttp({ body: {} });
+        validateRegisterDID(missingAll.req, missingAll.res, missingAll.next);
+        assert.equal(missingAll.getStatus(), 400);
+        assert.equal(missingAll.getBody().details.length, 3);
+    });
+
+    it('middleware: rejects malformed keys, invalid signatures, or unexpected fields', () => {
+        const malformed = createMockHttp({
+            body: {
+                publicKey: 'invalid-hex',
+                signature: 'short',
+                message: '',
+                extraField: 'hacker'
+            }
+        });
+        validateRegisterDID(malformed.req, malformed.res, malformed.next);
+        assert.equal(malformed.getStatus(), 400);
+        assert.ok(malformed.getBody().details.some(d => d.field === 'body'));
+        assert.ok(malformed.getBody().details.some(d => d.field === 'publicKey'));
+        assert.ok(malformed.getBody().details.some(d => d.field === 'signature'));
+        assert.ok(malformed.getBody().details.some(d => d.field === 'message'));
+    });
+
+    it('middleware: allows valid contributor registration payload', () => {
+        const valid = createMockHttp({
+            body: {
+                publicKey: validPubKey,
+                signature: validSig,
+                message: validMsg
+            }
+        });
+        validateRegisterDID(valid.req, valid.res, valid.next);
+        assert.equal(valid.wasNextCalled(), true);
+    });
+});
+
 

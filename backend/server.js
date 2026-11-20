@@ -93,7 +93,8 @@ app.get('/api', (_req, res) => {
         },
         endpoints: {
             'GET /api/auth/github': 'Begin GitHub OAuth flow',
-            'GET /api/auth/github/callback': 'OAuth callback (creates DID on first login)',
+            'GET /api/auth/github/callback': 'OAuth callback',
+            'POST /api/auth/register-did': 'Register contributor-controlled DID with proof of possession',
             'GET /api/auth/me': 'Current user profile (JWT required)',
             'GET /api/auth/did/:username': 'Resolve DID by GitHub username (public)',
             'GET /api/auth/did-resolve/self': 'Re-resolve your DID live (JWT required)',
@@ -114,8 +115,6 @@ if (process.env.NODE_ENV !== 'test') {
     });
 }
 
-export default app;
-
 // Graceful shutdown
 async function shutdown(signal) {
     console.log(`\n${signal} received — shutting down gracefully...`);
@@ -125,3 +124,5 @@ async function shutdown(signal) {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
+
+export default app;
