@@ -2,6 +2,11 @@
 import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
+import { decryptGitHubToken } from '../services/githubTokenService.js';
+import {
+    normalizeGitHubRepository,
+    verifyRepositoryAdminAccess,
+} from '../services/githubRepositoryAccessService.js';
 import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
 import {
     DEFAULT_SCORING_WEIGHTS,
@@ -19,7 +24,6 @@ import {
 } from '../middleware/validate.js';
 
 const router = express.Router();
-
 
 /**
  * GET /api/org/all
@@ -75,14 +79,82 @@ router.get('/info', authenticateToken, async (req, res) => {
 });
 
 /**
+ * Load the authenticated organization together with its private, encrypted
+ * GitHub OAuth token. Contributors must not register or configure repositories.
+ */
+async function loadOrganizationForRepositoryWrite(req, res) {
+    const organization = await User.findById(req.user.id).select("+githubAccessTokenEncrypted");
+    if (!organization) {
+        res.status(404).json({ error: "Organization account not found" });
+        return null;
+    }
+    if (organization.role !== "organization") {
+        res.status(403).json({ error: "Only organization accounts can register or configure repositories" });
+        return null;
+    }
+    return organization;
+}
+
+/**
+ * Verify the current organization user's own GitHub admin permission.
+ * A shared server-side GITHUB_PAT is deliberately not used for this check.
+ */
+async function requireRepositoryAdminAccess(organization, repository, res) {
+    if (!process.env.GITHUB_TOKEN_ENCRYPTION_KEY) {
+        res.status(503).json({
+            error: "Repository ownership verification is not configured on this server",
+            code: "github_token_encryption_not_configured",
+        });
+        return false;
+    }
+
+    if (!organization.githubAccessTokenEncrypted) {
+        res.status(428).json({
+            error: "Reconnect GitHub to grant repository access before registering or configuring repositories",
+            code: "github_reauthorization_required",
+        });
+        return false;
+    }
+
+    let accessToken;
+    try {
+        accessToken = decryptGitHubToken(organization.githubAccessTokenEncrypted);
+    } catch (error) {
+        console.error("Unable to decrypt organization GitHub token:", error.message);
+        res.status(503).json({
+            error: "Stored GitHub authorization is unavailable. Reconnect GitHub after the server encryption key is configured.",
+            code: "github_authorization_unavailable",
+        });
+        return false;
+    }
+
+    const verification = await verifyRepositoryAdminAccess(repository, accessToken);
+    if (!verification.authorized) {
+        if (verification.retryAfter) res.set("Retry-After", verification.retryAfter);
+        res.status(verification.status).json({
+            error: verification.message,
+            code: verification.code,
+            repository: verification.repository,
+        });
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * POST /api/org/repositories
  */
 router.post('/repositories', authenticateToken, validateAddRepository, async (req, res) => {
     try {
         const repoName = req.normalizedRepo; // validated & normalized "owner/repo"
 
-        const user = await User.findById(req.user.id);
-        const exists = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        const exists = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!exists) {
             user.repositories.push({
                 name: repoName,
@@ -141,12 +213,18 @@ router.put('/repositories/:repoId/branches', authenticateToken, validateRepoIdPa
     try {
         const repoName = req.normalizedRepoId;
         const { targetBranches } = req.body;
+        if (!Array.isArray(targetBranches) || targetBranches.some(branch => typeof branch !== "string" || !branch.trim())) {
+            return res.status(400).json({ error: "targetBranches must be an array of non-empty branch names" });
+        }
 
-        const user = await User.findById(req.user.id);
-        const repo = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+        const repo = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
-        
-        repo.targetBranches = targetBranches;
+
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        repo.targetBranches = [...new Set(targetBranches.map(branch => branch.trim()))];
         await user.save();
         res.json({ success: true, repositories: user.repositories });
     } catch (error) {
@@ -163,9 +241,19 @@ router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdPara
         const repoName = req.normalizedRepoId;
         const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
 
-        const user = await User.findById(req.user.id);
-        const repo = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+        const repo = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
+
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        if (targetBranches !== undefined) {
+            if (!Array.isArray(targetBranches) || targetBranches.some(branch => typeof branch !== "string" || !branch.trim())) {
+                return res.status(400).json({ error: "targetBranches must be an array of non-empty branch names" });
+            }
+            repo.targetBranches = [...new Set(targetBranches.map(branch => branch.trim()))];
+        }
 
         // Validate the final merged weights before mutating the repository.
         let nextWeights = null;
@@ -175,7 +263,6 @@ router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdPara
             if (!valid) return sendValidationError(res, errors);
         }
 
-        if (targetBranches) repo.targetBranches = targetBranches;
         if (nextWeights) repo.weights = nextWeights;
         if (reputationWeights) {
             repo.reputationWeights = {
@@ -217,9 +304,9 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
             // If wallet is missing, mark as pending without triggering smart contract execution
             if (!userDoc?.wallet) {
                 console.log(`Repo Payout: Contributor ${c.username} has no linked wallet. Setting status to pending.`);
-                results.push({ 
-                    username: c.username, 
-                    amount, 
+                results.push({
+                    username: c.username,
+                    amount,
                     status: 'pending_wallet',
                     message: 'Contributor wallet is not linked. Payout marked as pending.'
                 });
@@ -227,11 +314,11 @@ router.post('/payout/execute', authenticateToken, async (req, res) => {
             }
 
             const txResult = await proposePayout(userDoc.wallet, amount);
-            results.push({ 
-                username: c.username, 
-                amount, 
+            results.push({
+                username: c.username,
+                amount,
                 status: txResult.success ? 'success' : 'failed',
-                txResult 
+                txResult
             });
         }
 

@@ -49,9 +49,6 @@ import {
     fetchPRDetails,
     repoFullNameFromUrl
 } from './githubSearch.js';
-import { calculateSpamPenalty } from './kineticMechanisms.js';
-import AlgorithmVersion from '../models/AlgorithmVersion.js';
-import ContributionScore from '../models/ContributionScore.js';
 import { isProofVerified, refreshProofOfBuild, summarizeProof } from './proofOfBuild.js';
 
 const MAX_LINES = 10000;
