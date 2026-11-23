@@ -1,0 +1,510 @@
+/**
+ * Persistent Contribution Index
+ *
+ * Keeps merged PRs in MongoDB (ContributionEvent) so scoring reads indexed
+ * history instead of refetching it from GitHub on every request.
+ *
+ * Sync is incremental per scope ('author:<login>' or 'repo:<owner/repo>'):
+ * scopes with a cursor share one search for PRs merged since the oldest
+ * cursor; scopes without one get a single full-history search, newest first.
+ * A cursor only moves forward ($max), and only after a clean search (no error,
+ * no rate limit, not incomplete). A full-history search truncated at GitHub's
+ * 1000-result cap still moves each scope's cursor to the newest mergedAt it
+ * fetched and marks the scope historyTruncated; a truncated incremental search
+ * does not move cursors, since a gap there would lose PRs.
+ */
+
+import ContributionEvent from '../models/ContributionEvent.js';
+import ContributionSyncState from '../models/ContributionSyncState.js';
+import { fetchAllSearchResults, fetchPRDetails, fetchPRReviewsBatch } from './githubSearch.js';
+import { normalizeReviews } from './reviewAttribution.js';
+
+// Re-fetch details for PRs merged this recently, so review comments added
+// shortly after merge are still counted.
+export const DETAIL_REFRESH_DAYS = 14;
+// ...but at most once per this many hours per PR.
+export const DETAIL_REFRESH_MIN_AGE_HOURS = 24;
+
+// First (full) sync uses the same window as the original search.
+const FIRST_SYNC_QUALIFIER = 'updated:>2024-01-01';
+
+// Search results can lag behind merges; re-read this much before the cursor.
+const CURSOR_OVERLAP_MS = 24 * 60 * 60 * 1000;
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+function isoSeconds(date) {
+    return new Date(date).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/**
+ * Builds the search query for a group of scope qualifiers.
+ * Without a cursor it is a full-history search; with one, only PRs merged
+ * since (cursor - overlap).
+ */
+export function buildSearchQuery(qualifiers, since) {
+    const window = since
+        ? `merged:>=${isoSeconds(new Date(since).getTime() - CURSOR_OVERLAP_MS)}`
+        : FIRST_SYNC_QUALIFIER;
+    return `${qualifiers.join(' ')} is:pr is:merged ${window}`;
+}
+
+/**
+ * Index fields that can be taken from a search item (no extra request).
+ */
+export function eventFromSearchItem(item, now = new Date()) {
+    const match = (item.repository_url || '').match(/\/repos\/([^/]+\/[^/]+)$/);
+    const repo = match ? match[1] : null;
+    return {
+        repo,
+        repoKey: repo?.toLowerCase(),
+        prNumber: item.number,
+        author: item.user?.login,
+        authorKey: item.user?.login?.toLowerCase(),
+        authorId: item.user?.id,
+        authorAvatar: item.user?.avatar_url,
+        title: item.title,
+        url: item.html_url || item.pull_request?.html_url,
+        apiUrl: item.pull_request?.url,
+        ...(item.created_at && { createdAt: new Date(item.created_at) }),
+        mergedAt: item.pull_request?.merged_at ? new Date(item.pull_request.merged_at) : null,
+        fetchedAt: now
+    };
+}
+
+/**
+ * Index fields taken from a full PR object (GET /repos/:o/:r/pulls/:n).
+ */
+export function detailsFromPR(pr, now = new Date(), reviewData = null) {
+    const details = {
+        ...(pr.base?.repo?.full_name && { repo: pr.base.repo.full_name }),
+        createdAt: pr.created_at ? new Date(pr.created_at) : null,
+        mergedBy: pr.merged_by ? { login: pr.merged_by.login, id: pr.merged_by.id } : null,
+        mergeCommitSha: pr.merge_commit_sha || null,
+        headSha: pr.head?.sha || null,
+        stats: {
+            additions: pr.additions || 0,
+            deletions: pr.deletions || 0,
+            changedFiles: pr.changed_files || 0,
+            commits: pr.commits || 0,
+            comments: pr.comments || 0,
+            reviewComments: pr.review_comments || 0,
+            merged: pr.merged === true,
+            labels: (pr.labels || []).map(l => l.name)
+        },
+        detailsFetchedAt: now
+    };
+
+    if (reviewData) {
+        const reviewsObj = reviewsFromPR(reviewData, now);
+        if (reviewsObj) {
+            Object.assign(details, reviewsObj);
+        }
+    }
+
+    return details;
+}
+
+/**
+ * Normalizes PR review records and returns fields to update on ContributionEvent.
+ */
+export function reviewsFromPR(reviewData, now = new Date()) {
+    if (!reviewData) return null;
+    const normalized = normalizeReviews(
+        reviewData.reviews || [],
+        reviewData.comments || [],
+        reviewData.existingReviews || []
+    );
+    return {
+        reviews: normalized.reviews,
+        reviewers: normalized.reviewers,
+        substantiveReviewers: normalized.substantiveReviewers,
+        reviewSummary: normalized.reviewSummary,
+        reviewsFetchedAt: now
+    };
+}
+
+/**
+ * Rebuilds the GitHub PR fields extractPRMetrics() reads, from an indexed event.
+ */
+export function toPRShape(event) {
+    const s = event.stats || {};
+    return {
+        number: event.prNumber,
+        title: event.title,
+        html_url: event.url,
+        created_at: event.createdAt ? isoSeconds(event.createdAt) : null,
+        merged_at: event.mergedAt ? isoSeconds(event.mergedAt) : null,
+        base: { repo: { full_name: event.repo } },
+        additions: s.additions,
+        deletions: s.deletions,
+        changed_files: s.changedFiles,
+        commits: s.commits,
+        comments: s.comments,
+        review_comments: s.reviewComments,
+        merged: s.merged,
+        labels: (s.labels || []).map(name => ({ name })),
+        reviews: event.reviews || [],
+        reviewers: event.reviewers || [],
+        substantiveReviewers: event.substantiveReviewers || [],
+        reviewSummary: event.reviewSummary || null
+    };
+}
+
+/**
+ * Commit-level attribution of an indexed contribution: repository, pull
+ * request, commit SHA (the merge commit), head SHA, author and merge event.
+ */
+export function attributionFromEvent(event) {
+    return {
+        repo: event.repo,
+        prNumber: event.prNumber ?? null,
+        commitSha: event.mergeCommitSha || null,
+        headSha: event.headSha || null,
+        author: event.author,
+        authorId: event.authorId ?? null,
+        mergedAt: event.mergedAt ? isoSeconds(event.mergedAt) : null,
+        mergedBy: event.mergedBy ? { login: event.mergedBy.login, id: event.mergedBy.id ?? null } : null,
+        ciEvidence: event.ciEvidence || null
+    };
+}
+
+/**
+ * Commits CI may have run on for an indexed PR: its head (PR CI) and its
+ * merge commit (post-merge CI). Empty until the PR's details are fetched.
+ */
+export function expectedShasForEvent(event) {
+    return [
+        { sha: event.headSha, kind: 'head' },
+        { sha: event.mergeCommitSha, kind: 'merge' }
+    ].filter(e => e.sha);
+}
+
+/**
+ * Stores CI evidence on an indexed PR. Only GitHub-confirmed runs that ran on
+ * the PR's own head or merge commit are stored, and an unverified result never
+ * replaces verified evidence. Returns true when the event was updated.
+ */
+export async function recordCiEvidence(Event, { repoKey, prNumber }, evidence, now = new Date()) {
+    if (!evidence?.confirmed || !evidence.matchedCommit) return false;
+    const filter = evidence.verified
+        ? { repoKey, prNumber }
+        : { repoKey, prNumber, 'ciEvidence.verified': { $ne: true } };
+    const result = await Event.updateOne(filter, {
+        $set: {
+            ciEvidence: {
+                runId: evidence.runId,
+                headSha: evidence.headSha,
+                status: evidence.status,
+                conclusion: evidence.conclusion,
+                matchedCommit: evidence.matchedCommit,
+                verified: evidence.verified,
+                reason: evidence.reason,
+                checkedAt: now
+            }
+        }
+    });
+    return (result.modifiedCount ?? result.nModified ?? 0) > 0;
+}
+
+/**
+ * True when details were fetched before merge attribution was stored, i.e.
+ * the event has no mergedBy field at all (detailsFromPR always sets it).
+ */
+export function missingAttribution(event) {
+    return Boolean(event.detailsFetchedAt) && event.mergedBy === undefined;
+}
+
+/**
+ * True when details were fetched before createdAt was stored, i.e. the event
+ * has no createdAt field at all (detailsFromPR always sets it, null when
+ * GitHub has none). Incremental searches and the 14-day refresh never reach
+ * older PRs, so they are fetched once more to backfill it.
+ */
+export function missingCreatedAt(event) {
+    return Boolean(event.detailsFetchedAt) && event.createdAt === undefined;
+}
+
+/**
+ * True when an event in a registered repo has no details yet, has details
+ * without merge attribution or createdAt (fetched once more to backfill
+ * them), or was merged
+ * within the refresh window and its details are older than the minimum age.
+ */
+export function needsDetails(event, registeredKeys, now = new Date()) {
+    if (!registeredKeys.has(event.repoKey)) return false;
+    if (!event.detailsFetchedAt || missingAttribution(event) || missingCreatedAt(event)) return true;
+    const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
+    const detailsOld = new Date(event.detailsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
+    return recentlyMerged && detailsOld;
+}
+
+/**
+ * True when an event in a registered repo has no reviews fetched yet, or was merged
+ * within the refresh window and its reviews are older than the minimum age.
+ * Evaluated independently from needsDetails so historical PRs with fresh details
+ * still receive review attribution.
+ */
+export function needsReviews(event, registeredKeys, now = new Date()) {
+    if (!registeredKeys.has(event.repoKey)) return false;
+    if (!event.reviewsFetchedAt) return true;
+    const recentlyMerged = Boolean(event.mergedAt) && new Date(event.mergedAt).getTime() >= now.getTime() - DETAIL_REFRESH_DAYS * DAY_MS;
+    const reviewsOld = new Date(event.reviewsFetchedAt).getTime() <= now.getTime() - DETAIL_REFRESH_MIN_AGE_HOURS * HOUR_MS;
+    return recentlyMerged && reviewsOld;
+}
+
+function duplicateKeyOnly(error) {
+    const writeErrors = [].concat(error?.writeErrors || []);
+    if (writeErrors.length > 0) return writeErrors.every(e => (e.code ?? e.err?.code) === 11000);
+    return error?.code === 11000;
+}
+
+/**
+ * Upserts events from search items. Unordered, so one failure doesn't stop
+ * the rest; duplicate-key errors (a concurrent request inserted the same PR)
+ * count as already indexed.
+ */
+export async function upsertEvents(Event, items, now = new Date()) {
+    const ops = items
+        .map(item => eventFromSearchItem(item, now))
+        .filter(e => e.repoKey && e.prNumber != null && e.authorKey)
+        .map(({ repo, ...fields }) => ({
+            updateOne: {
+                filter: { repoKey: fields.repoKey, prNumber: fields.prNumber },
+                update: { $set: fields, $setOnInsert: { repo, type: 'pr_merge' } },
+                upsert: true
+            }
+        }));
+
+    if (ops.length === 0) return { upserted: 0, duplicates: 0 };
+
+    try {
+        const result = await Event.bulkWrite(ops, { ordered: false });
+        return { upserted: result.upsertedCount || 0, duplicates: 0 };
+    } catch (error) {
+        if (!duplicateKeyOnly(error)) throw error;
+        return {
+            upserted: error.result?.upsertedCount ?? error.insertedCount ?? 0,
+            duplicates: [].concat(error.writeErrors || [error]).length
+        };
+    }
+}
+
+/**
+ * Moves a scope's cursor forward (never back).
+ */
+export async function advanceCursor(SyncState, scope, lastMergedAt, now = new Date(), { historyTruncated = false } = {}) {
+    const op = () => SyncState.updateOne(
+        { scope },
+        { $max: { lastMergedAt }, $set: { lastSyncedAt: now, ...(historyTruncated && { historyTruncated: true }) } },
+        { upsert: true }
+    );
+    try {
+        await op();
+    } catch (error) {
+        // A concurrent request created the cursor first; update it instead.
+        if (error?.code !== 11000) throw error;
+        await op();
+    }
+}
+
+/**
+ * Newest merged_at per scope key ('author:<login>' and 'repo:<owner/repo>').
+ */
+function newestMergedAtByScope(items) {
+    const newest = new Map();
+    for (const item of items) {
+        const event = eventFromSearchItem(item);
+        if (!event.mergedAt) continue;
+        for (const key of [`author:${event.authorKey}`, `repo:${event.repoKey}`]) {
+            if (!newest.has(key) || event.mergedAt > newest.get(key)) newest.set(key, event.mergedAt);
+        }
+    }
+    return newest;
+}
+
+/**
+ * Syncs the index for a set of scopes, then fetches missing / recent PR details.
+ *
+ * @param {object} args
+ * @param {{ key: string, qualifier: string }[]} args.scopes
+ * @param {object} args.detailFilter  Mongo filter for events eligible for details
+ * @param {Set<string>} args.registeredKeys  lowercased repo names registered on the platform
+ * @param {object} args.headers  GitHub request headers
+ */
+export async function syncIndex({
+    scopes,
+    detailFilter,
+    registeredKeys,
+    headers,
+    Event = ContributionEvent,
+    SyncState = ContributionSyncState,
+    now = new Date(),
+    fetchReviews = false
+}) {
+    const meta = {
+        githubRequests: 0,
+        searchRequests: 0,
+        detailRequests: 0,
+        detailErrors: 0,
+        reviewRequests: 0,
+        reviewErrors: 0,
+        newEvents: 0,
+        alreadyIndexed: 0,
+        truncated: false,
+        incomplete: false,
+        rateLimited: false,
+        rateLimitResetAt: null,
+        errors: [],
+        cursorsAdvanced: [],
+        historyTruncated: []
+    };
+
+    // Group scopes: one shared incremental search, one full search for new scopes
+    const cursors = await SyncState.find({ scope: { $in: scopes.map(s => s.key) } }).lean();
+    const cursorByScope = new Map(cursors.map(c => [c.scope, c.lastMergedAt]));
+    meta.historyTruncated = cursors.filter(c => c.historyTruncated).map(c => c.scope);
+    const withCursor = scopes.filter(s => cursorByScope.has(s.key));
+    const fresh = scopes.filter(s => !cursorByScope.has(s.key));
+
+    const groups = [];
+    if (withCursor.length > 0) {
+        const oldest = Math.min(...withCursor.map(s => new Date(cursorByScope.get(s.key)).getTime()));
+        groups.push({ scopes: withCursor, since: new Date(oldest) });
+    }
+    if (fresh.length > 0) groups.push({ scopes: fresh, since: null });
+
+    for (const group of groups) {
+        const fullHistory = !group.since;
+        const query = buildSearchQuery(group.scopes.map(s => s.qualifier), group.since);
+        // Newest first, so a full search capped at 1000 keeps the most recent PRs
+        const search = await fetchAllSearchResults(query, headers, fullHistory ? { sort: 'updated', order: 'desc' } : {});
+        meta.searchRequests += search.requests;
+
+        const written = await upsertEvents(Event, search.items, now);
+        meta.newEvents += written.upserted;
+        meta.alreadyIndexed += written.duplicates;
+
+        meta.truncated ||= search.truncated;
+        meta.incomplete ||= search.incomplete;
+        if (search.rateLimited) {
+            meta.rateLimited = true;
+            meta.rateLimitResetAt = search.resetAt;
+        }
+        if (search.error) meta.errors.push(search.error);
+
+        const ok = !search.error && !search.incomplete;
+        if (ok && !search.truncated) {
+            for (const scope of group.scopes) {
+                await advanceCursor(SyncState, scope.key, now, now);
+                meta.cursorsAdvanced.push(scope.key);
+            }
+        } else if (ok && fullHistory) {
+            // First sync capped at 1000: index from the newest PR fetched onwards.
+            // A scope with nothing in the capped results stays new.
+            const newest = newestMergedAtByScope(search.items);
+            for (const scope of group.scopes) {
+                if (!newest.has(scope.key)) continue;
+                await advanceCursor(SyncState, scope.key, newest.get(scope.key), now, { historyTruncated: true });
+                meta.cursorsAdvanced.push(scope.key);
+                meta.historyTruncated.push(scope.key);
+            }
+        }
+        if (search.rateLimited) break;
+    }
+
+    // Fetch details for new events and refresh recently merged ones. Skipped when
+    // the search failed: those requests would fail the same way, and events left
+    // without details are picked up by the next clean sync.
+    if (meta.errors.length === 0) {
+        const indexed = await Event
+            .find({ ...detailFilter, repoKey: { $in: [...registeredKeys] } })
+            .select('repoKey prNumber apiUrl mergedAt detailsFetchedAt mergedBy createdAt reviewsFetchedAt reviews')
+            .lean();
+
+        // Independent selection for details and reviews so historical PRs whose
+        // details are already cached still receive review attribution.
+        const detailTargets = indexed.filter(e => e.apiUrl && needsDetails(e, registeredKeys, now));
+        const reviewTargets = fetchReviews
+            ? indexed.filter(e => e.apiUrl && needsReviews(e, registeredKeys, now))
+            : [];
+
+        const updatesMap = new Map();
+        function getOrCreateUpdate(target) {
+            const key = `${target.repoKey}#${target.prNumber}`;
+            if (!updatesMap.has(key)) {
+                updatesMap.set(key, {
+                    filter: { repoKey: target.repoKey, prNumber: target.prNumber },
+                    set: {}
+                });
+            }
+            return updatesMap.get(key);
+        }
+
+        if (detailTargets.length > 0) {
+            const details = await fetchPRDetails(detailTargets.map(e => e.apiUrl), headers);
+            meta.detailRequests = details.requests;
+            meta.detailErrors = details.errors;
+            if (details.rateLimited) {
+                meta.rateLimited = true;
+                meta.rateLimitResetAt = details.resetAt;
+            }
+
+            details.prs.forEach((pr, i) => {
+                if (!pr) return;
+                const update = getOrCreateUpdate(detailTargets[i]);
+                Object.assign(update.set, detailsFromPR(pr, now));
+            });
+        }
+
+        if (fetchReviews && !meta.rateLimited && reviewTargets.length > 0) {
+            const reviewBatch = await fetchPRReviewsBatch(reviewTargets.map(e => e.apiUrl), headers);
+            meta.reviewRequests = reviewBatch.requests;
+            meta.reviewErrors = reviewBatch.errors;
+            if (reviewBatch.rateLimited) {
+                meta.rateLimited = true;
+                meta.rateLimitResetAt = reviewBatch.resetAt;
+            }
+
+            if (reviewBatch.results) {
+                reviewBatch.results.forEach((rData, i) => {
+                    // Explicit per-PR endpoint check: never overwrite stored reviews on failed fetch
+                    if (!rData || !rData.ok || !rData.reviewsOk) {
+                        return;
+                    }
+
+                    const target = reviewTargets[i];
+                    const reviewsObj = reviewsFromPR({
+                        reviews: rData.reviews,
+                        comments: rData.comments,
+                        existingReviews: target.reviews || []
+                    }, now);
+
+                    if (reviewsObj) {
+                        const update = getOrCreateUpdate(target);
+                        Object.assign(update.set, reviewsObj);
+                    }
+                });
+            }
+        }
+
+        const updates = Array.from(updatesMap.values())
+            .filter(u => Object.keys(u.set).length > 0)
+            .map(u => ({
+                updateOne: {
+                    filter: u.filter,
+                    update: { $set: u.set }
+                }
+            }));
+
+        if (updates.length > 0) await Event.bulkWrite(updates, { ordered: false });
+    }
+
+    meta.reviewRequests = meta.reviewRequests || 0;
+    meta.reviewErrors = meta.reviewErrors || 0;
+    meta.githubRequests = meta.searchRequests + meta.detailRequests + meta.reviewRequests;
+    meta.stale = meta.errors.length > 0 || meta.rateLimited;
+    meta.partial = meta.stale || meta.incomplete || meta.detailErrors > 0 || meta.reviewErrors > 0;
+    return meta;
+}

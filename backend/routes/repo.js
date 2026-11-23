@@ -1,6 +1,5 @@
-import express from 'express';
-import jwt from 'jsonwebtoken';
-import mongoose from 'mongoose';
+﻿import express from 'express';
+import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
 import { getTreasuryBalance } from '../services/flowTreasuryService.js';
@@ -10,23 +9,28 @@ import {
     sumConfiguredBountyPools,
     toFlowUnits,
 } from '../services/payoutAllocationService.js';
+import { decryptGitHubToken } from '../services/githubTokenService.js';
+import {
+    normalizeGitHubRepository,
+    verifyRepositoryAdminAccess,
+} from '../services/githubRepositoryAccessService.js';
+import { computeOrgContributors, DEFAULT_REPUTATION_WEIGHTS } from '../services/contributionService.js';
+import {
+    DEFAULT_SCORING_WEIGHTS,
+    mergeScoringWeights,
+    validateScoringWeights
+} from '../config/scoringWeights.js';
+
+import {
+    validateAddRepository,
+    validateRepoIdParam,
+    validateUpdateBranches,
+    validateRepoConfig,
+    sendValidationError,
+    normalizeRepoName
+} from '../middleware/validate.js';
 
 const router = express.Router();
-
-function authenticateToken(req, res, next) {
-    const auth = req.headers['authorization'];
-    const token = auth && auth.split(' ')[1];
-    if (!token) return res.status(401).json({ error: 'Access token required' });
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(403).json({ error: 'Invalid or expired token' });
-    }
-}
-
-import { computeOrgContributors } from '../services/contributionService.js';
 
 /**
  * GET /api/org/all
@@ -43,6 +47,7 @@ router.get('/all', async (req, res) => {
                     owner: u.github,
                     ownerAvatar: u.avatarUrl || `https://github.com/${u.github}.png`,
                     weights: r.weights,
+                    reputationWeights: r.reputationWeights || DEFAULT_REPUTATION_WEIGHTS,
                     totalPool: 1000 + (r.name.length * 50), // Semi-stable pool
                     activePRs: 5 + (r.name.length % 5)
                 });
@@ -81,39 +86,88 @@ router.get('/info', authenticateToken, async (req, res) => {
 });
 
 /**
- * Normalize a repo identifier to "owner/repo" format.
- * Accepts full GitHub URLs, github.com/owner/repo, or plain owner/repo.
+ * Load the authenticated organization together with its private, encrypted
+ * GitHub OAuth token. Contributors must not register or configure repositories.
  */
-function normalizeRepoName(input) {
-    // Strip protocol and domain if present
-    let cleaned = input.trim();
-    cleaned = cleaned.replace(/^https?:\/\//i, '');   // remove https:// or http://
-    cleaned = cleaned.replace(/^github\.com\//i, ''); // remove github.com/
-    cleaned = cleaned.replace(/\.git$/i, '');          // remove trailing .git
-    cleaned = cleaned.replace(/\/+$/, '');             // remove trailing slashes
-    // Now should be "owner/repo" — take only first two path segments
-    const parts = cleaned.split('/').filter(Boolean);
-    if (parts.length < 2) return cleaned; // can't normalize, return as-is
-    return `${parts[0]}/${parts[1]}`;
+async function loadOrganizationForRepositoryWrite(req, res) {
+    const organization = await User.findById(req.user.id).select("+githubAccessTokenEncrypted");
+    if (!organization) {
+        res.status(404).json({ error: "Organization account not found" });
+        return null;
+    }
+    if (organization.role !== "organization") {
+        res.status(403).json({ error: "Only organization accounts can register or configure repositories" });
+        return null;
+    }
+    return organization;
+}
+
+/**
+ * Verify the current organization user's own GitHub admin permission.
+ * A shared server-side GITHUB_PAT is deliberately not used for this check.
+ */
+async function requireRepositoryAdminAccess(organization, repository, res) {
+    if (!process.env.GITHUB_TOKEN_ENCRYPTION_KEY) {
+        res.status(503).json({
+            error: "Repository ownership verification is not configured on this server",
+            code: "github_token_encryption_not_configured",
+        });
+        return false;
+    }
+
+    if (!organization.githubAccessTokenEncrypted) {
+        res.status(428).json({
+            error: "Reconnect GitHub to grant repository access before registering or configuring repositories",
+            code: "github_reauthorization_required",
+        });
+        return false;
+    }
+
+    let accessToken;
+    try {
+        accessToken = decryptGitHubToken(organization.githubAccessTokenEncrypted);
+    } catch (error) {
+        console.error("Unable to decrypt organization GitHub token:", error.message);
+        res.status(503).json({
+            error: "Stored GitHub authorization is unavailable. Reconnect GitHub after the server encryption key is configured.",
+            code: "github_authorization_unavailable",
+        });
+        return false;
+    }
+
+    const verification = await verifyRepositoryAdminAccess(repository, accessToken);
+    if (!verification.authorized) {
+        if (verification.retryAfter) res.set("Retry-After", verification.retryAfter);
+        res.status(verification.status).json({
+            error: verification.message,
+            code: verification.code,
+            repository: verification.repository,
+        });
+        return false;
+    }
+
+    return true;
 }
 
 /**
  * POST /api/org/repositories
  */
-router.post('/repositories', authenticateToken, async (req, res) => {
+router.post('/repositories', authenticateToken, validateAddRepository, async (req, res) => {
     try {
-        const { repository } = req.body;
-        if (!repository) return res.status(400).json({ error: 'Repository name required' });
+        const repoName = req.normalizedRepo; // validated & normalized "owner/repo"
 
-        const repoName = normalizeRepoName(repository); // always store as owner/repo
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
 
-        const user = await User.findById(req.user.id);
-        const exists = user.repositories.find(r => r.name === repoName);
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        const exists = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!exists) {
             user.repositories.push({
                 name: repoName,
                 targetBranches: ['main'],
-                weights: { impact: 0.2, complexity: 0.2, quality: 0.2, review: 0.2, priority: 0.2 }
+                weights: { ...DEFAULT_SCORING_WEIGHTS },
+                reputationWeights: DEFAULT_REPUTATION_WEIGHTS
             });
             await user.save();
         }
@@ -127,10 +181,9 @@ router.post('/repositories', authenticateToken, async (req, res) => {
  * GET /api/org/repositories/:repoId/branches
  * Fetch all branches for a repository from GitHub API
  */
-router.get('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
+router.get('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), async (req, res) => {
     try {
-        // Normalize in case old records were stored as full URLs
-        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        const repoName = req.normalizedRepoId;
         const pat = process.env.GITHUB_PAT;
 
         const headers = { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Kinetic-App' };
@@ -163,17 +216,22 @@ router.get('/repositories/:repoId/branches', authenticateToken, async (req, res)
 /**
  * PUT /api/org/repositories/:repoId/branches
  */
-
-router.put('/repositories/:repoId/branches', authenticateToken, async (req, res) => {
+router.put('/repositories/:repoId/branches', authenticateToken, validateRepoIdParam('repoId'), validateUpdateBranches, async (req, res) => {
     try {
-        const repoName = normalizeRepoName(decodeURIComponent(req.params.repoId));
+        const repoName = req.normalizedRepoId;
         const { targetBranches } = req.body;
+        if (!Array.isArray(targetBranches) || targetBranches.some(branch => typeof branch !== "string" || !branch.trim())) {
+            return res.status(400).json({ error: "targetBranches must be an array of non-empty branch names" });
+        }
 
-        const user = await User.findById(req.user.id);
-        const repo = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+        const repo = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
-        
-        repo.targetBranches = targetBranches;
+
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        repo.targetBranches = [...new Set(targetBranches.map(branch => branch.trim()))];
         await user.save();
         res.json({ success: true, repositories: user.repositories });
     } catch (error) {
@@ -185,23 +243,40 @@ router.put('/repositories/:repoId/branches', authenticateToken, async (req, res)
  * PUT /api/org/repositories/:repoId/config
  * Update multiple repo settings at once
  */
-router.put('/repositories/:repoId/config', authenticateToken, async (req, res) => {
+router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdParam('repoId'), validateRepoConfig, async (req, res) => {
     try {
-        const repoName = decodeURIComponent(req.params.repoId);
-        const { targetBranches, weights, bountyPool } = req.body;
+        const repoName = req.normalizedRepoId;
+        const { targetBranches, weights, bountyPool, reputationWeights } = req.body;
 
-        const user = await User.findById(req.user.id);
-        const repo = user.repositories.find(r => r.name === repoName);
+        const user = await loadOrganizationForRepositoryWrite(req, res);
+        if (!user) return;
+        const repo = user.repositories.find(r => r.name.toLowerCase() === repoName.toLowerCase());
         if (!repo) return res.status(404).json({ error: 'Repository not found' });
 
-        if (targetBranches) repo.targetBranches = targetBranches;
+        if (!(await requireRepositoryAdminAccess(user, repoName, res))) return;
+
+        if (targetBranches !== undefined) {
+            if (!Array.isArray(targetBranches) || targetBranches.some(branch => typeof branch !== "string" || !branch.trim())) {
+                return res.status(400).json({ error: "targetBranches must be an array of non-empty branch names" });
+            }
+            repo.targetBranches = [...new Set(targetBranches.map(branch => branch.trim()))];
+        }
+
+        // Validate the final merged weights before mutating the repository.
+        let nextWeights = null;
         if (weights) {
-            repo.weights = {
-                impact: weights.impact ?? repo.weights.impact,
-                complexity: weights.complexity ?? repo.weights.complexity,
-                quality: weights.quality ?? repo.weights.quality,
-                review: weights.review ?? repo.weights.review,
-                priority: weights.priority ?? repo.weights.priority
+            nextWeights = mergeScoringWeights(repo.weights, weights);
+            const { valid, errors } = validateScoringWeights(nextWeights);
+            if (!valid) return sendValidationError(res, errors);
+        }
+
+        if (nextWeights) repo.weights = nextWeights;
+        if (reputationWeights) {
+            repo.reputationWeights = {
+                alpha: reputationWeights.alpha ?? repo.reputationWeights?.alpha ?? DEFAULT_REPUTATION_WEIGHTS.alpha,
+                beta: reputationWeights.beta ?? repo.reputationWeights?.beta ?? DEFAULT_REPUTATION_WEIGHTS.beta,
+                gamma: reputationWeights.gamma ?? repo.reputationWeights?.gamma ?? DEFAULT_REPUTATION_WEIGHTS.gamma,
+                delta: reputationWeights.delta ?? repo.reputationWeights?.delta ?? DEFAULT_REPUTATION_WEIGHTS.delta
             };
         }
         if (typeof bountyPool === 'number') repo.bountyPool = bountyPool;
@@ -212,8 +287,6 @@ router.put('/repositories/:repoId/config', authenticateToken, async (req, res) =
         res.status(500).json({ error: 'Server error', message: error.message });
     }
 });
-
-export default router;
 
 /**
  * POST /api/org/payout/propose
@@ -298,25 +371,22 @@ router.post('/payout/propose', authenticateToken, async (req, res) => {
             });
         }
 
-        const successful = results.filter(item => item.txResult?.success);
-        const failed = results.filter(item => !item.txResult?.success);
-        return res.status(failed.length ? 207 : 201).json({
-            success: failed.length === 0,
-            message: failed.length
-                ? "Some funding-pool payout proposals failed; inspect the per-wallet results"
-                : "Funding-pool payout proposals were submitted successfully",
+        const successful = results.filter(item => item.txResult?.success).length;
+        const failed = results.length - successful;
+
+        res.json({
+            success: failed === 0,
             configuredPool,
             treasuryBalance,
-            availablePool: allocation.totalPool,
+            availablePool: formatFlowUnits(availableUnits),
             totalAllocated: allocation.totalAllocated,
-            recipientAllocations: allocation.recipientAllocations,
+            totalProposals: results.length,
+            successfulProposals: successful,
+            failedProposals: failed,
             results,
-            successfulProposals: successful.length,
-            failedProposals: failed.length,
         });
     } catch (error) {
-        console.error("Funding-pool payout proposal error:", error);
-        return res.status(500).json({ error: "Funding-pool allocation failed", message: error.message });
+        res.status(500).json({ error: 'Server error', message: error.message });
     }
 });
 
@@ -327,3 +397,5 @@ router.post('/payout/execute', authenticateToken, (req, res) => {
         error: "This endpoint no longer creates or executes payouts. Use POST /api/org/payout/propose to create proposals.",
     });
 });
+
+export default router;
