@@ -216,7 +216,7 @@ describe('issueToken', () => {
 describe('protected routes', () => {
     // Every route that needs a token. A route that loses its protection fails here.
     const PROTECTED = {
-        auth: ['GET /me', 'GET /did-resolve/self', 'PUT /wallet'],
+        auth: ['GET /me', 'POST /register-did', 'GET /did-resolve/self', 'PUT /wallet'],
         contribution: ['GET /me'],
         repo: [
             'GET /contributors',
@@ -225,6 +225,7 @@ describe('protected routes', () => {
             'GET /repositories/:repoId/branches',
             'PUT /repositories/:repoId/branches',
             'PUT /repositories/:repoId/config',
+            'POST /payout/propose',
             'POST /payout/execute',
         ],
         payoutLifecycle: ['GET /:payoutId', 'POST /:payoutId/approve', 'POST /:payoutId/execute'],

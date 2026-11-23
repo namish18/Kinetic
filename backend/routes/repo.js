@@ -2,6 +2,13 @@
 import { authenticateToken } from '../middleware/auth.js';
 import User from '../models/User.js';
 import { proposePayout } from '../services/flowService.js';
+import { getTreasuryBalance } from '../services/flowTreasuryService.js';
+import {
+    calculatePayoutAllocations,
+    formatFlowUnits,
+    sumConfiguredBountyPools,
+    toFlowUnits,
+} from '../services/payoutAllocationService.js';
 import { decryptGitHubToken } from '../services/githubTokenService.js';
 import {
     normalizeGitHubRepository,
@@ -282,50 +289,113 @@ router.put('/repositories/:repoId/config', authenticateToken, validateRepoIdPara
 });
 
 /**
- * POST /api/org/payout/execute
- * Propose payouts on the Flow blockchain for all contributors 
+ * POST /api/org/payout/propose
+ * Calculate proportional allocations against configured repository pools
+ * and the live Flow treasury balance, then submit per-wallet proposals.
  */
-router.post('/payout/execute', authenticateToken, async (req, res) => {
+router.post('/payout/propose', authenticateToken, async (req, res) => {
     try {
-        const { contributors } = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
-        
-        if (!contributors || contributors.length === 0) {
-            return res.status(400).json({ error: 'No contributors found to payout.' });
+        const organization = await User.findById(req.user.id);
+        if (!organization) return res.status(404).json({ error: "Organization account not found" });
+        if (organization.role !== "organization") {
+            return res.status(403).json({ error: "Only organization accounts can propose payouts" });
+        }
+        if (!Array.isArray(organization.repositories) || organization.repositories.length === 0) {
+            return res.status(400).json({ error: "No tracked repositories have configured funding pools" });
         }
 
-        const results = [];
-        
-        for (const c of contributors) {
-            const amount = c.totalScore * 5; // 5 FLOW per pt (as defined in frontend)
-            if (amount <= 0) continue;
+        const configuredPool = sumConfiguredBountyPools(organization.repositories);
+        const configuredPoolUnits = toFlowUnits(configuredPool);
+        if (configuredPoolUnits <= 0n) {
+            return res.status(400).json({ error: "Configured funding pools total zero FLOW" });
+        }
 
-            const userDoc = await User.findOne({ github: c.username });
-
-            // If wallet is missing, mark as pending without triggering smart contract execution
-            if (!userDoc?.wallet) {
-                console.log(`Repo Payout: Contributor ${c.username} has no linked wallet. Setting status to pending.`);
-                results.push({
-                    username: c.username,
-                    amount,
-                    status: 'pending_wallet',
-                    message: 'Contributor wallet is not linked. Payout marked as pending.'
-                });
-                continue;
-            }
-
-            const txResult = await proposePayout(userDoc.wallet, amount);
-            results.push({
-                username: c.username,
-                amount,
-                status: txResult.success ? 'success' : 'failed',
-                txResult
+        const treasuryBalance = await getTreasuryBalance();
+        const treasuryUnits = toFlowUnits(treasuryBalance);
+        const availableUnits = configuredPoolUnits < treasuryUnits ? configuredPoolUnits : treasuryUnits;
+        if (availableUnits <= 0n) {
+            return res.status(409).json({
+                error: "The Flow treasury has no available balance",
+                configuredPool,
+                treasuryBalance,
             });
         }
 
-        res.json({ success: true, results });
+        const { contributors } = await computeOrgContributors(req.user.id, process.env.GITHUB_PAT);
+        if (!Array.isArray(contributors) || contributors.length === 0) {
+            return res.status(400).json({ error: "No eligible contributors were found" });
+        }
+
+        const allocation = calculatePayoutAllocations(contributors, formatFlowUnits(availableUnits));
+        const usernames = allocation.recipientAllocations.map(item => item.username);
+        const users = await User.find({ github: { $in: usernames } }).select("github wallet");
+        const userByName = new Map(users.map(user => [user.github, user]));
+        const missingWallets = usernames.filter(username => !userByName.get(username)?.wallet);
+        if (missingWallets.length > 0) {
+            return res.status(409).json({
+                error: "Every allocated contributor must link a Flow wallet before proposals can be created",
+                missingWallets,
+                pendingAllocation: allocation.recipientAllocations,
+            });
+        }
+
+        const byWallet = new Map();
+        for (const item of allocation.recipientAllocations) {
+            const wallet = String(userByName.get(item.username).wallet).trim().toLowerCase();
+            if (!/^0x[0-9a-f]{16}$/.test(wallet)) {
+                return res.status(409).json({
+                    error: "A contributor has an invalid Flow wallet address",
+                    username: item.username,
+                });
+            }
+            const existing = byWallet.get(wallet) || { wallet, usernames: [], amountUnits: 0n };
+            existing.usernames.push(item.username);
+            existing.amountUnits += toFlowUnits(item.amount);
+            byWallet.set(wallet, existing);
+        }
+
+        const results = [];
+        for (const entry of byWallet.values()) {
+            const amount = formatFlowUnits(entry.amountUnits);
+            const txResult = await proposePayout(entry.wallet, Number(amount));
+            const payoutEvent = (txResult?.details?.events || []).find(event =>
+                String(event.type || "").endsWith(".PayoutProposed")
+            );
+            const payoutId = payoutEvent?.data?.id == null ? null : String(payoutEvent.data.id);
+            results.push({
+                payoutId,
+                wallet: entry.wallet,
+                usernames: entry.usernames,
+                amount,
+                txResult,
+            });
+        }
+
+        const successful = results.filter(item => item.txResult?.success).length;
+        const failed = results.length - successful;
+
+        res.json({
+            success: failed === 0,
+            configuredPool,
+            treasuryBalance,
+            availablePool: formatFlowUnits(availableUnits),
+            totalAllocated: allocation.totalAllocated,
+            totalProposals: results.length,
+            successfulProposals: successful,
+            failedProposals: failed,
+            results,
+        });
     } catch (error) {
         res.status(500).json({ error: 'Server error', message: error.message });
     }
+});
+
+// The old endpoint name implied that it executed transfers. Keep it explicit
+// that proposals must now be created first and executed through the lifecycle API.
+router.post('/payout/execute', authenticateToken, (req, res) => {
+    return res.status(400).json({
+        error: "This endpoint no longer creates or executes payouts. Use POST /api/org/payout/propose to create proposals.",
+    });
 });
 
 export default router;
