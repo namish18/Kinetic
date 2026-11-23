@@ -15,8 +15,11 @@ import ContributionEvent from '../models/ContributionEvent.js';
 import {
     syncIndex,
     toPRShape,
-    attributionFromEvent
+    attributionFromEvent,
+    reviewsFromPR
 } from './contributionIndex.js';
+export { normalizeReviews, evaluateReviewSubstance, REVIEW_DECISIONS } from './reviewAttribution.js';
+export { reviewsFromPR };
 
 /**
  * Sync details reported in a score response's meta.
@@ -34,6 +37,8 @@ function indexMeta(sync) {
         searchRequests: sync.searchRequests,
         detailRequests: sync.detailRequests,
         detailErrors: sync.detailErrors,
+        reviewRequests: sync.reviewRequests || 0,
+        reviewErrors: sync.reviewErrors || 0,
         newEvents: sync.newEvents,
         alreadyIndexed: sync.alreadyIndexed,
         cursorsAdvanced: sync.cursorsAdvanced
@@ -373,7 +378,8 @@ export async function computeContributionScore(username, token, options = {}) {
             }],
             detailFilter: { authorKey },
             registeredKeys,
-            headers
+            headers,
+            fetchReviews: true
         });
 
         const scoringFilter = {
@@ -614,7 +620,11 @@ export async function computeContributionScore(username, token, options = {}) {
                 date: record.prData.merged_at?.split('T')[0] || 'N/A',
                 link: record.prData.html_url,
                 proofOfBuild: record.proofOfBuild,
-                ...record.attribution
+                ...record.attribution,
+                reviews: record.prData.reviews || [],
+                reviewers: record.prData.reviewers || [],
+                substantiveReviewers: record.prData.substantiveReviewers || [],
+                reviewSummary: record.prData.reviewSummary || null
             });
         }
 
@@ -703,7 +713,8 @@ export async function computeOrgContributors(orgId, token) {
             })),
             detailFilter: {},
             registeredKeys: repoKeys,
-            headers
+            headers,
+            fetchReviews: true
         });
 
         const scoringFilter = {
