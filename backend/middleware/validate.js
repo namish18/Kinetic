@@ -1,3 +1,7 @@
+﻿import {
+    SCORING_WEIGHT_KEYS,
+    validateScoringWeights
+} from '../config/scoringWeights.js';
 /**
  * API Input Validation Middleware and Helpers
  *
@@ -16,7 +20,7 @@ const GITHUB_REPO_NAME_REGEX = /^[a-zA-Z0-9_.-]{1,100}$/;
 const FLOW_ADDRESS_REGEX = /^0x[0-9a-fA-F]{16}$/;
 
 // Allowed keys for repository scoring weights
-const ALLOWED_WEIGHT_KEYS = ['impact', 'complexity', 'quality', 'review', 'priority'];
+const ALLOWED_WEIGHT_KEYS = SCORING_WEIGHT_KEYS;
 
 /**
  * Standardized validation error response.
@@ -134,9 +138,9 @@ export function isValidAmount(amount, { allowZero = false } = {}) {
     return allowZero ? amount >= 0 : amount > 0;
 }
 
-// ─────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Express Middleware
-// ─────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Middleware: Validates a GitHub username in req.params.
@@ -437,6 +441,29 @@ export function validateRepoConfig(req, res, next) {
         }
     }
 
+    // Validate the sum when all five weights are supplied.
+    // Partial updates are validated after merging in the route.
+    if (
+        weights !== undefined &&
+        typeof weights === 'object' &&
+        weights !== null &&
+        !Array.isArray(weights)
+    ) {
+        const suppliedWeightKeys = Object.keys(weights);
+        const isCompleteConfiguration =
+            suppliedWeightKeys.length === SCORING_WEIGHT_KEYS.length &&
+            SCORING_WEIGHT_KEYS.every(key =>
+                Object.prototype.hasOwnProperty.call(weights, key)
+            );
+
+        if (
+            isCompleteConfiguration &&
+            SCORING_WEIGHT_KEYS.every(key => isValidWeightValue(weights[key]))
+        ) {
+            const result = validateScoringWeights(weights);
+            if (!result.valid) errors.push(...result.errors);
+        }
+    }
     // Validate bountyPool if provided
     if (bountyPool !== undefined) {
         if (!isValidAmount(bountyPool, { allowZero: true })) {
@@ -459,7 +486,7 @@ export function validateRepoConfig(req, res, next) {
  * Used on GET /api/kinetic/proof-of-build?repo=owner/repo&runId=123
  */
 export function validateProofOfBuild(req, res, next) {
-    const { repo, runId } = req.query;
+    const { repo, runId, sha, pr } = req.query;
     const errors = [];
 
     if (!repo || typeof repo !== 'string' || repo.trim().length === 0) {
@@ -486,11 +513,27 @@ export function validateProofOfBuild(req, res, next) {
         });
     }
 
+    if (sha !== undefined && (typeof sha !== 'string' || !/^[0-9a-f]{7,40}$/i.test(sha.trim()))) {
+        errors.push({
+            field: 'sha',
+            message: "'sha' must be a commit SHA of 7-40 hexadecimal characters."
+        });
+    }
+
+    if (pr !== undefined && (typeof pr !== 'string' || !/^[1-9]\d*$/.test(pr.trim()))) {
+        errors.push({
+            field: 'pr',
+            message: "'pr' must be a positive integer pull request number."
+        });
+    }
+
     if (errors.length > 0) {
         return sendValidationError(res, errors);
     }
 
     req.normalizedRepo = normalizeRepoName(repo);
+    if (sha !== undefined) req.expectedSha = sha.trim().toLowerCase();
+    if (pr !== undefined) req.prNumber = Number(pr.trim());
     next();
 }
 
@@ -611,4 +654,106 @@ export function validateQuadraticFunding(req, res, next) {
 
     next();
 }
+
+/**
+ * Validates whether an input is a valid 32-byte Ed25519 public key.
+ * Accepts 64-char hex string (optionally 0x prefixed) or 44-char base64 string.
+ */
+export function isValidEd25519PublicKey(key) {
+    if (typeof key !== 'string') return false;
+    const trimmed = key.trim();
+    if (/^(0x)?[0-9a-fA-F]{64}$/.test(trimmed)) {
+        return true;
+    }
+    // Base64 32 bytes = 44 characters (ending in =)
+    if (/^[A-Za-z0-9+/]{43}=$/.test(trimmed)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Validates whether an input is a valid 64-byte Ed25519 signature.
+ * Accepts 128-char hex string (optionally 0x prefixed) or 88-char base64 string.
+ */
+export function isValidEd25519Signature(sig) {
+    if (typeof sig !== 'string') return false;
+    const trimmed = sig.trim();
+    if (/^(0x)?[0-9a-fA-F]{128}$/.test(trimmed)) {
+        return true;
+    }
+    // Base64 64 bytes = 88 characters (ending in ==)
+    if (/^[A-Za-z0-9+/]{86}==$/.test(trimmed)) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Middleware: Validates contributor DID registration payload.
+ * Used on POST /api/auth/register-did
+ */
+export function validateRegisterDID(req, res, next) {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+        return sendValidationError(res, {
+            field: 'body',
+            message: 'Request payload must be a JSON object.'
+        });
+    }
+
+    const { publicKey, signature, message } = req.body;
+    const errors = [];
+
+    const allowedKeys = ['publicKey', 'signature', 'message'];
+    const unknownKeys = Object.keys(req.body).filter(k => !allowedKeys.includes(k));
+    if (unknownKeys.length > 0) {
+        errors.push({
+            field: 'body',
+            message: `Unexpected field(s): ${unknownKeys.join(', ')}. Only 'publicKey', 'signature', and 'message' are allowed.`
+        });
+    }
+
+    if (!publicKey || typeof publicKey !== 'string' || publicKey.trim().length === 0) {
+        errors.push({
+            field: 'publicKey',
+            message: "Field 'publicKey' is required."
+        });
+    } else if (!isValidEd25519PublicKey(publicKey)) {
+        errors.push({
+            field: 'publicKey',
+            message: "Invalid 'publicKey'. Expected a 32-byte Ed25519 public key as a 64-character hexadecimal or base64 string."
+        });
+    }
+
+    if (!signature || typeof signature !== 'string' || signature.trim().length === 0) {
+        errors.push({
+            field: 'signature',
+            message: "Field 'signature' is required."
+        });
+    } else if (!isValidEd25519Signature(signature)) {
+        errors.push({
+            field: 'signature',
+            message: "Invalid 'signature'. Expected a 64-byte Ed25519 signature as a 128-character hexadecimal or base64 string."
+        });
+    }
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+        errors.push({
+            field: 'message',
+            message: "Field 'message' is required (non-empty challenge string)."
+        });
+    } else if (message.length > 1000) {
+        errors.push({
+            field: 'message',
+            message: "Field 'message' exceeds maximum allowed length of 1000 characters."
+        });
+    }
+
+    if (errors.length > 0) {
+        return sendValidationError(res, errors);
+    }
+
+    next();
+}
+
 

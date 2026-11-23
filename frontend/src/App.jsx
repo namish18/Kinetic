@@ -1,9 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import AntiGamingBadge from './components/AntiGamingBadge';
 import OrbitingEcosystem from './components/OrbitingEcosystem';
+import { getOrCreateContributorIdentity, exportContributorKeyBackup } from './lib/identity';
 
 function App() {
   const [wallet, setWallet] = useState(null);
+  const [identity] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return getOrCreateContributorIdentity('demo-contributor');
+      } catch (err) {
+        console.warn('Failed to initialize contributor identity:', err);
+        return null;
+      }
+    }
+    return null;
+  });
   
   // Sample timestamps submitted within 4 mins to test velocity penalty UI
   const samplePRTimestamps = [
@@ -129,6 +141,53 @@ function App() {
           {/* CARD 3: ANTI-GAMING */}
           <div>
             <AntiGamingBadge timestamps={samplePRTimestamps} />
+          </div>
+
+          {/* CARD 4: CONTRIBUTOR-CONTROLLED IDENTITY (DID-01) */}
+          <div style={{
+            background: 'rgba(255, 255, 255, 0.02)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            borderRadius: '16px',
+            padding: '24px',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between'
+          }}>
+            <div>
+              <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                CONTRIBUTOR-CONTROLLED IDENTITY (DID-01)
+              </span>
+              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+                Self-Sovereign did:key
+              </div>
+              <p style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '8px', fontFamily: 'monospace', wordBreak: 'break-all', background: 'rgba(255, 255, 255, 0.03)', padding: '8px', borderRadius: '6px' }}>
+                {identity?.did || 'Generating contributor keypair...'}
+              </p>
+              <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '6px' }}>
+                Custody: <span style={{ color: '#00f2fe' }}>Contributor Client (Browser)</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => exportContributorKeyBackup('demo-contributor')}
+              style={{
+                marginTop: '16px',
+                background: 'rgba(0, 242, 254, 0.1)',
+                border: '1px solid rgba(0, 242, 254, 0.3)',
+                color: '#00f2fe',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                width: 'fit-content'
+              }}
+            >
+              Export Private Key Backup ↓
+            </button>
           </div>
         </div>
 
